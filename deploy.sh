@@ -47,8 +47,8 @@ if [ "$DEPLOY_GPU" = "1" ]; then
   fi
   gcloud run deploy spec-gpu --image "$AR/spec-gpu:latest" --region "$REGION" \
     --gpu 1 --gpu-type nvidia-l4 --no-gpu-zonal-redundancy \
-    --cpu 4 --memory 16Gi --no-cpu-throttling \
-    --min-instances 0 --max-instances 1 --concurrency 4 --timeout 600 \
+    --cpu 4 --memory 16Gi --no-cpu-throttling --cpu-boost \
+    --min-instances 0 --max-instances 1 --concurrency 16 --timeout 600 \
     --port 8080 --no-allow-unauthenticated
   gcloud run services add-iam-policy-binding spec-gpu --region "$REGION" \
     --member "serviceAccount:${WEB_SA}" --role roles/run.invoker

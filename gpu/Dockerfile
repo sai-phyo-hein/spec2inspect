@@ -18,6 +18,6 @@ RUN mkdir -p /models && cd /models && \
 
 COPY start.sh /start.sh
 RUN chmod +x /start.sh && (/app/llama-server --version || llama-server --version || true)   # build number in the build log
-ENV PORT=8080 LLAMA_PARALLEL=4
+ENV PORT=8080 LLAMA_PARALLEL=16
 ENTRYPOINT []
 CMD ["/start.sh"]

@@ -57,7 +57,7 @@ async function analyseOnGpu(image, onProgress) {
   const { id } = await r.json();
   const t0 = Date.now();
   while (Date.now() - t0 < 7 * 60000) {
-    await new Promise((res) => setTimeout(res, 1500));
+    await new Promise((res) => setTimeout(res, 700));
     const j = await (await fetch(`api/live/jobs/${id}`, { cache: "no-store" })).json();
     onProgress(j.elapsed ?? (Date.now() - t0) / 1000);
     if (j.state === "done") return j.result;

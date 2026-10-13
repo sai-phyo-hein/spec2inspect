@@ -31,6 +31,7 @@ INFER_MODEL    = os.environ.get("INFER_MODEL", "gemma")
 MAX_UPLOAD_MB  = 8
 JOB_TTL_S      = 15 * 60
 GPU_DEADLINE_S = 360                                         # covers a GPU cold start plus the 15 checks
+GPU_PARALLEL   = int(os.environ.get("GPU_PARALLEL", "16"))     # compartment questions in flight; match spec-gpu slots
 SAMPLES_REPO   = os.environ.get("SAMPLES_REPO", "saiphyohein/spec2inspect-images")
 MAX_SAMPLES    = 24
 
@@ -95,9 +96,10 @@ def run_job(job_id: str, im: Image.Image):
         try:
             t0 = time.time()
             deadline = t0 + GPU_DEADLINE_S
-            raw = analyze(im, lambda c, t, a: ask_remote(c, t, a, deadline), cell_text=CELL_TEXT, max_workers=4)
+            raw = analyze(im, lambda c, t, a: ask_remote(c, t, a, deadline), cell_text=CELL_TEXT, max_workers=GPU_PARALLEL)
             raw.update(entry=f"upload-{job_id}", img_id="uploaded photo", label=None, color="Uploaded", stops=0.0,
-                       w=im.width, h=im.height, seconds=round(time.time() - t0, 2), live=True)
+                       w=im.width, h=im.height, seconds=round(time.time() - t0, 2), live=True,
+                       queued_s=round(t0 - job["created"], 2))
             job.update(state="done", result=raw)
         except Exception as ex:                # reported to the page, which shows it in the line log
             job.update(state="error", error=f"{type(ex).__name__}: {ex}")
@@ -113,6 +115,28 @@ def prune_jobs():
 @app.get("/api/live/status")
 def live_status():
     return {"available": bool(INFER_ENDPOINT)}
+
+_warm = {"at": 0.0}
+
+def _ping_gpu():
+    """Wake the GPU service in the background (it scales to zero), so it is ready by the time Inspect is pressed."""
+    u = urlparse(INFER_ENDPOINT)
+    deadline = time.time() + GPU_DEADLINE_S
+    while time.time() < deadline:
+        try:
+            if requests.get(f"{u.scheme}://{u.netloc}/health", headers=auth_headers(), timeout=30).status_code == 200:
+                return
+        except Exception:
+            pass
+        time.sleep(5)
+
+@app.post("/api/live/warm")
+def warm():
+    """Called when the page switches to Live. Returns at once; the GPU starts in the background."""
+    if INFER_ENDPOINT and time.time() - _warm["at"] > 60:
+        _warm["at"] = time.time()
+        threading.Thread(target=_ping_gpu, daemon=True).start()
+    return {"ok": True}
 
 @app.post("/api/live/jobs")
 def create_job(body: UploadJob):

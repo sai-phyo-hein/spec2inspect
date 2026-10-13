@@ -25,6 +25,7 @@ function switchTo(mode) {
   $("live-ctl").hidden = mode === "replay";
   if (mode === "live") {                         // the recorded line keeps running underneath
     state.running = true; $button("btn-run").textContent = "Pause";
+    fetch("api/live/warm", { method: "POST" }).catch(() => {});   // start the GPU now, quietly, so Inspect is fast
   }
   setMode(mode, notes[mode]());
   showTray(mode === "live");

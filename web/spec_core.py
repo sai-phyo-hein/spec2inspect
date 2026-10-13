@@ -154,7 +154,7 @@ def chat_body(crop, text, model="gemma"):
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
                                                       {"type": "text", "text": text}]}],
-            "max_tokens": 8, "temperature": 0, "logprobs": True, "top_logprobs": 20,
+            "max_tokens": 2, "temperature": 0, "logprobs": True, "top_logprobs": 20,
             "chat_template_kwargs": {"enable_thinking": False}}
 
 # ---------------- analyse (needs a model) and render (CPU only) ----------------
