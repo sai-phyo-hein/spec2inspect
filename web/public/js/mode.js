@@ -5,7 +5,7 @@ import { state } from "./state.js";
 import { setMode, log } from "./log.js";
 import { showTray } from "./tray.js";
 
-export const SAMPLE_IMAGES_URL = "https://huggingface.co/datasets/sai-phyo-hein/spec2inspect-images";
+export const SAMPLE_IMAGES_URL = "https://huggingface.co/datasets/saiphyohein/spec2inspect-images";
 const sampleLink = `<a href="${SAMPLE_IMAGES_URL}" target="_blank" rel="noopener">Get sample images ↗</a>`;
 
 let recordedDate = "";

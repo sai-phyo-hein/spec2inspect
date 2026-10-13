@@ -31,7 +31,7 @@ INFER_MODEL    = os.environ.get("INFER_MODEL", "gemma")
 MAX_UPLOAD_MB  = 8
 JOB_TTL_S      = 15 * 60
 GPU_DEADLINE_S = 360                                         # covers a GPU cold start plus the 15 checks
-SAMPLES_REPO   = os.environ.get("SAMPLES_REPO", "sai-phyo-hein/spec2inspect-images")
+SAMPLES_REPO   = os.environ.get("SAMPLES_REPO", "saiphyohein/spec2inspect-images")
 MAX_SAMPLES    = 24
 
 app = FastAPI(title="spec2inspect", docs_url=None, redoc_url=None)
