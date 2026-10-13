@@ -64,11 +64,13 @@ export interface Box {
   image: BoxImage | null; result: Evaluation | null; colors?: (string | null)[];
   revealed: number; dist: number; removing?: boolean;
   /** an uploaded photo inspected live (not from the recording) */
-  upload?: boolean; liveSeconds?: number;
+  upload?: boolean; liveSeconds?: number; name?: string;
 }
 
+export type Mode = "replay" | "live" | "check";
+
 export interface LineState {
-  mode: "replay" | "live";
+  mode: Mode;
   entries: Entry[]; playlist: Entry[]; pos: number; imgUrl: ((e: Entry) => string) | null;
   running: boolean; speed: number; live: boolean;
   /** infeed held while an uploaded photo is placed at, or inspected at, the camera */
@@ -80,3 +82,12 @@ export interface LineState {
 
 /** A photo in the Live-mode tray: a sample from the Hugging Face dataset (or the recording), or one the user uploaded. */
 export interface TrayItem { name: string; url: string; kind: "sample" | "yours"; }
+
+/** One live inspection of an uploaded photo, kept for the Check page (and in localStorage). */
+export interface CheckRecord {
+  id: string; at: string; name: string;
+  /** small JPEG of the photo with its inspection overlay */
+  thumb: string;
+  failed: boolean; findings: string[]; counts: string[];
+  seconds: number | null; rules: string[];
+}

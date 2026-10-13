@@ -36,6 +36,7 @@ async function placePhoto(item) {
     state.hold = true; $("line-status").textContent = "HOLD · PLACING YOUR PHOTO";
     log(`<span class="info">${item.name}: holding the line and placing it at Cam 01</span>`);
     requestUploadPlacement(image, (box) => {
+      box.name = item.name;
       placed = box; phase = "placed"; setButtons();
       $("line-status").textContent = "HOLD · PRESS INSPECT";
       promptUploaded(box);

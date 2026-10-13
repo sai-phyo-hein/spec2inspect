@@ -266,3 +266,32 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .thumb { display: block; width: 100%; height: auto; }
 .tabs button { font-size: .9rem; white-space: nowrap; }
 #tray-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* ---------- Check page: results of uploaded photos ---------- */
+.mode-switch #mode-check.on { background: var(--info); color: #fff; }
+.layout[hidden], .check-page[hidden] { display: none; }
+.check-page { display: flex; flex-direction: column; gap: 14px; padding: 14px 24px 10px; min-height: 0; overflow: hidden; }
+.check-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.check-kpis { display: flex; gap: 8px; flex-wrap: wrap; }
+.check-actions { display: flex; align-items: center; gap: 8px; }
+.check-list { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px; align-content: start; padding-bottom: 6px; }
+.check-card { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--ok); border-radius: 12px; overflow: hidden;
+  display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.check-card.fail { border-left-color: var(--bad); }
+.check-card img { width: 100%; aspect-ratio: 17 / 10; object-fit: cover; display: block; background: #000; }
+.check-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.check-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.check-verdict { font: 700 1.2rem "Barlow Condensed", "Arial Narrow", sans-serif; letter-spacing: .08em; color: var(--ok); }
+.check-card.fail .check-verdict { color: var(--bad); }
+.check-meta { font-size: .72rem; color: var(--muted); }
+.check-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.check-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+.check-grid span { text-align: center; font: 600 .75rem "JetBrains Mono", ui-monospace, monospace; padding: 2px 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; }
+.check-findings { margin: 0; padding-left: 18px; font-size: .82rem; color: var(--text); }
+.check-ok { margin: 0; font-size: .82rem; color: var(--muted); }
+.check-rules summary { cursor: pointer; font-size: .78rem; color: var(--muted); }
+.check-rules ul { margin: 4px 0 0; padding-left: 18px; font-size: .78rem; color: var(--muted); }
+.check-empty { color: var(--muted); grid-column: 1 / -1; padding: 40px 0; text-align: center; }
+@media (max-width: 760px) { .check-page { padding: 12px; overflow: visible; } }

@@ -30,10 +30,11 @@
   <div class="mode-switch" role="radiogroup" aria-label="Mode">
     <button type="button" role="radio" id="mode-replay" class="on" aria-checked="true" title="Replay inspections recorded with Gemma 4">Replay</button>
     <button type="button" role="radio" id="mode-live" aria-checked="false" disabled title="Live needs the deployed GPU service"><span class="ldot"></span>Live</button>
+    <button type="button" role="radio" id="mode-check" aria-checked="false" title="Results of the photos you inspected live">Check</button>
   </div>
 </header>
 
-<main class="layout">
+<main class="layout" id="line-layout">
   <div class="left">
   <section class="card line-card">
     <div class="card-head"><h2 class="cond">Production line</h2>
@@ -138,6 +139,24 @@
     </div>
   </aside>
 </main>
+<section class="check-page" id="check-page" hidden aria-label="Results of uploaded photos">
+  <div class="check-head">
+    <div class="check-kpis">
+      <div class="kpi"><div class="v" id="ck-total">0</div><div class="l">Photos inspected</div></div>
+      <div class="kpi ok"><div class="v" id="ck-pass">0</div><div class="l">Passed</div></div>
+      <div class="kpi bad"><div class="v" id="ck-fail">0</div><div class="l">Rejected</div></div>
+      <div class="kpi"><div class="v" id="ck-secs">–</div><div class="l">Avg time on GPU</div></div>
+    </div>
+    <div class="check-actions">
+      <div class="tabs" id="check-filter" role="group" aria-label="Filter">
+        <button type="button" data-f="all" class="on">All</button><button type="button" data-f="pass">Passed</button><button type="button" data-f="fail">Rejected</button>
+      </div>
+      <button type="button" id="ck-csv">Download CSV</button>
+      <button type="button" id="ck-clear">Clear</button>
+    </div>
+  </div>
+  <div class="check-list" id="check-list"></div>
+</section>
 <footer class="foot"><span class="note" id="mode-note"></span><span>Images: MVTec LOCO AD pushpins (CC BY-NC-SA 4.0, © MVTec Software GmbH) · colour and lighting variants are synthetic edits</span></footer>
 </div>
 </div>

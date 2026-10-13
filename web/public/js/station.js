@@ -9,6 +9,7 @@ import { clearShot, drawShot, drawMatrix, setVerdict, setVerdictMessage, setStep
 import { clamp, tower, flash, packet } from "./scene.js";
 import { log, updateKpis } from "./log.js";
 import { getThreshold } from "./spec-editor.js";
+import { recordCheck } from "./history.js";
 /** @typedef {import("../../types/model").Box} Box */
 /** @typedef {import("../../types/model").RuleSet} RuleSet */
 /** @typedef {import("../../types/model").Evaluation} Evaluation */
@@ -86,6 +87,7 @@ async function finish(b) {
   log(`box <b>#${b.id + 1}</b>${b.upload ? ` <span class="info">[your photo, live ${b.liveSeconds}s]</span>` : ""} → ` +
       `<span class="${result.failed ? "bad" : "ok"}">${result.failed ? "FAIL" : "PASS"}</span>${first} · signal sent to diverter`);
 
+  if (b.upload && ruleSet) recordCheck(b, ruleSet.items);       // shows up on the Check page
   clamp(false); await wait(450);
   b.phase = "toDiverter"; state.station = null; state.hold = false;
   $("line-status").textContent = "RUNNING"; tower("t-g");

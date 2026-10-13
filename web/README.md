@@ -1,10 +1,10 @@
 # spec-web
 
-The line page, its APIs and the Gradio inspection page, served by one Cloud Run service.
+The line page and its live-inspection API, served by one Cloud Run service.
 
 ```
 web/
-├── app_web.py          FastAPI + Gradio: /api/live/*, /replay (recorded results), /inspect (Gradio), / (line page)
+├── app_web.py          FastAPI: /api/live/* (inspect a photo on the GPU), /api/samples (tray photos), /replay, /
 ├── spec_core.py        Shared Python logic: grid finding, wall/colour measurement, model calls, rendering
 ├── public/             The line page — static files, also what Firebase Hosting serves
 │   ├── index.html      Markup only
@@ -20,7 +20,11 @@ web/
 │       ├── station.js      inspection sequence at the camera
 │       ├── panel.js        AI pipeline panel (image overlay, steps, grid, verdict)
 │       ├── spec-editor.js  written-specification card (add / remove / edit rules)
-│       ├── live.js         Live mode (wake GPU, analyse boxes now)
+│       ├── mode.js         Replay / Live / Check switch
+│       ├── upload.js       Live: place a photo at the camera (tray or upload), inspect it on the GPU
+│       ├── tray.js         Live: photo tray in the left panel (samples + your uploads), drag onto the line
+│       ├── history.js      results of photos inspected live (memory + localStorage, CSV export)
+│       ├── check.js        Check page: cards with verdict, counts, findings and the rules that applied
 │       └── log.js          line log, KPIs, mode badge
 ├── types/model.d.ts    shared data shapes (Entry, Rule, Evaluation, Box, ...) for type checking
 ├── tsconfig.json       type checking only: checkJs + strict, no build output

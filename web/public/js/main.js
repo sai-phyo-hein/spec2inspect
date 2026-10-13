@@ -8,6 +8,7 @@ import { drawMatrix } from "./panel.js";
 import { initSpecEditor } from "./spec-editor.js";
 import { initModeSwitch } from "./mode.js";
 import { initUpload, cancelUpload } from "./upload.js";
+import { initCheck } from "./check.js";
 import { initStation, inspect, reapplyRules } from "./station.js";
 import { startLine } from "./scene.js";
 import { setMode, log } from "./log.js";
@@ -27,6 +28,7 @@ $select("speed").addEventListener("change", (e) => { state.speed = parseFloat(/*
 try {
   const idx = await loadReplay();
   await initUpload();
+  initCheck();
   await initModeSwitch((idx.recorded || "").slice(0, 10), cancelUpload);
   startLine(inspect);
 } catch (e) {

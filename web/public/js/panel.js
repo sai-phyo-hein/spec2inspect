@@ -35,35 +35,45 @@ export function setVerdictMessage(head, html, kind = "") {
  * @param {0 | 1 | 2 | 3} upTo 0 image only · 1 + grid · 2 + compartments revealed so far · 3 + missing walls
  */
 export function drawShot(box, upTo) {
+  if (!box.image) return;
+  const H = Math.round(shot.width * box.image.h / box.image.w);
+  if (shot.height !== H) shot.height = H;
+  renderOverlay(g, shot.width, box, upTo);
+}
+
+/**
+ * Draw a box photo with its inspection overlay onto any 2D context of width W.
+ * @param {CanvasRenderingContext2D} ctx @param {number} W @param {Box} box @param {0 | 1 | 2 | 3} upTo
+ */
+export function renderOverlay(ctx, W, box, upTo) {
   const im = box.image, e = box.entry, res = box.result;
   if (!im) return;
-  const W = shot.width, H = Math.round(W * im.h / im.w);
-  if (shot.height !== H) shot.height = H;
-  g.drawImage(im.canvas, 0, 0, W, H);
+  const H = Math.round(W * im.h / im.w);
+  ctx.drawImage(im.canvas, 0, 0, W, H);
   const s = W / im.w, lw = Math.max(2, Math.round(W / 300));
   if (upTo >= 1) {
-    g.strokeStyle = "rgba(79,179,255,.85)"; g.lineWidth = 1;
-    for (const x of e.xs) { g.beginPath(); g.moveTo(x * s, e.ys[0] * s); g.lineTo(x * s, e.ys[e.ys.length - 1] * s); g.stroke(); }
-    for (const y of e.ys) { g.beginPath(); g.moveTo(e.xs[0] * s, y * s); g.lineTo(e.xs[e.xs.length - 1] * s, y * s); g.stroke(); }
+    ctx.strokeStyle = "rgba(79,179,255,.85)"; ctx.lineWidth = 1;
+    for (const x of e.xs) { ctx.beginPath(); ctx.moveTo(x * s, e.ys[0] * s); ctx.lineTo(x * s, e.ys[e.ys.length - 1] * s); ctx.stroke(); }
+    for (const y of e.ys) { ctx.beginPath(); ctx.moveTo(e.xs[0] * s, y * s); ctx.lineTo(e.xs[e.xs.length - 1] * s, y * s); ctx.stroke(); }
   }
   if (upTo >= 2 && res) {
     const n = upTo === 2 ? box.revealed : res.cells.length;
-    g.font = `600 ${Math.round(W / 26)}px "JetBrains Mono", monospace`;
+    ctx.font = `600 ${Math.round(W / 26)}px "JetBrains Mono", monospace`;
     res.cells.slice(0, n).forEach((c) => {
       const [x0, y0, x1, y1] = c.box;
       const col = c.flagged ? "#ff4d4f" : c.dist ? "#36c275" : "rgba(160,170,180,.8)";
-      g.strokeStyle = col; g.lineWidth = c.flagged ? lw * 2 : lw;
-      g.strokeRect(x0 * s, y0 * s, (x1 - x0) * s, (y1 - y0) * s);
-      g.fillStyle = col; g.fillText(c.count, x0 * s + 6, y0 * s + W / 24);
+      ctx.strokeStyle = col; ctx.lineWidth = c.flagged ? lw * 2 : lw;
+      ctx.strokeRect(x0 * s, y0 * s, (x1 - x0) * s, (y1 - y0) * s);
+      ctx.fillStyle = col; ctx.fillText(c.count, x0 * s + 6, y0 * s + W / 24);
     });
   }
   if (upTo >= 3 && res) {
-    g.strokeStyle = "#ff9f1c"; g.lineWidth = lw * 3;
+    ctx.strokeStyle = "#ff9f1c"; ctx.lineWidth = lw * 3;
     for (const w of res.missing) {
-      g.beginPath();
-      if (w.o === "v") { g.moveTo(e.xs[w.c + 1] * s, e.ys[w.r] * s); g.lineTo(e.xs[w.c + 1] * s, e.ys[w.r + 1] * s); }
-      else { g.moveTo(e.xs[w.c] * s, e.ys[w.r + 1] * s); g.lineTo(e.xs[w.c + 1] * s, e.ys[w.r + 1] * s); }
-      g.stroke();
+      ctx.beginPath();
+      if (w.o === "v") { ctx.moveTo(e.xs[w.c + 1] * s, e.ys[w.r] * s); ctx.lineTo(e.xs[w.c + 1] * s, e.ys[w.r + 1] * s); }
+      else { ctx.moveTo(e.xs[w.c] * s, e.ys[w.r + 1] * s); ctx.lineTo(e.xs[w.c + 1] * s, e.ys[w.r + 1] * s); }
+      ctx.stroke();
     }
   }
 }

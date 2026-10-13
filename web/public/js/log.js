@@ -21,10 +21,10 @@ export function updateKpis() {
   $("bin-rej").textContent = String(state.binRej);
 }
 
-/** Show the mode on the switch and the matching note in the footer. @param {"replay" | "live"} mode @param {string} note */
+/** Show the mode on the switch and the matching note in the footer. @param {import("../../types/model").Mode} mode @param {string} note */
 export function setMode(mode, note) {
   state.mode = mode;
-  for (const [id, on] of [["mode-replay", mode === "replay"], ["mode-live", mode === "live"]]) {
+  for (const [id, on] of [["mode-replay", mode === "replay"], ["mode-live", mode === "live"], ["mode-check", mode === "check"]]) {
     const b = $(/** @type {string} */ (id)); b.classList.toggle("on", /** @type {boolean} */ (on)); b.setAttribute("aria-checked", String(on));
   }
   $("mode-note").innerHTML = note;
