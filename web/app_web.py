@@ -33,7 +33,7 @@ JOB_TTL_S      = 15 * 60
 GPU_DEADLINE_S = 360                                         # covers a GPU cold start plus the 15 checks
 GPU_PARALLEL   = int(os.environ.get("GPU_PARALLEL", "16"))     # compartment questions in flight; match spec-gpu slots
 SAMPLES_REPO   = os.environ.get("SAMPLES_REPO", "saiphyohein/spec2inspect-images")
-MAX_SAMPLES    = 24
+MAX_SAMPLES    = 40                                           # tray photos listed from the dataset
 
 app = FastAPI(title="spec2inspect", docs_url=None, redoc_url=None)
 
