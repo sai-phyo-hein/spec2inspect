@@ -1,0 +1,31 @@
+// @ts-check
+// Line event log, KPI bar and mode badge.
+import { $ } from "./dom.js";
+import { state } from "./state.js";
+
+/** Add a line to the event log (newest first, last 80 kept). @param {string} html */
+export function log(html) {
+  const ul = $("log"), li = document.createElement("li");
+  li.innerHTML = `<span>${new Date().toTimeString().slice(0, 8)}</span><span>${html}</span>`;
+  ul.prepend(li);
+  while (ul.children.length > 80) ul.lastChild?.remove();
+}
+
+export function updateKpis() {
+  $("k-insp").textContent = String(state.inspected);
+  $("k-pass").textContent = String(state.passed);
+  $("k-fail").textContent = String(state.failed);
+  $("k-agree").textContent = state.agreeN ? `${state.agreeOk}/${state.agreeN}` : "–";
+  $("k-rate").textContent = state.runMs > 1000 ? (state.inspected / (state.runMs / 60000)).toFixed(1) : "0.0";
+  $("bin-good").textContent = String(state.binGood);
+  $("bin-rej").textContent = String(state.binRej);
+}
+
+/** @param {"replay" | "live"} mode @param {string} note */
+export function setMode(mode, note) {
+  state.mode = mode;
+  $("mode-text").textContent = mode === "live" ? "Live · GPU" : "Replay";
+  $("mode-badge").classList.toggle("liveon", mode === "live");
+  $("mode-badge").classList.toggle("live", true);
+  $("mode-note").innerHTML = note;
+}

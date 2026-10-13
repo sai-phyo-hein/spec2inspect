@@ -1,0 +1,16 @@
+{
+  // Type checking only: the browser runs the .js files as they are; tsc never emits anything.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["public/js/**/*.js", "types/**/*.d.ts", "tests/**/*.mjs"]
+}

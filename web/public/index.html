@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Line 3 · Spec-to-Inspection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/line.css">
+</head>
+<body>
+<div class="viewport" id="viewport">
+<div class="stage" id="stage">
+<header class="topbar">
+  <div class="brand">
+    <div class="mark" aria-hidden="true"></div>
+    <div>
+      <h1 class="cond">Line 3 · Kit inspection</h1>
+      <p>Spec-to-Inspection · written rules, no training images · Gemma 4 E4B</p>
+    </div>
+  </div>
+  <div class="kpis" aria-live="polite">
+    <div class="kpi"><div class="v" id="k-insp">0</div><div class="l">Inspected</div></div>
+    <div class="kpi ok"><div class="v" id="k-pass">0</div><div class="l">Passed</div></div>
+    <div class="kpi bad"><div class="v" id="k-fail">0</div><div class="l">Rejected</div></div>
+    <div class="kpi"><div class="v" id="k-agree">–</div><div class="l" title="Agreement with the dataset labels, which follow the original spec">Matches dataset</div></div>
+    <div class="kpi"><div class="v" id="k-rate">0.0</div><div class="l">Boxes / min</div></div>
+  </div>
+  <span class="badge" id="mode-badge"><span class="dot"></span><span id="mode-text">Preview</span></span>
+  <button type="button" id="btn-live" class="live-btn" disabled title="Live mode runs on the Cloud Run deployment (GPU service)"><span class="ldot"></span><span id="live-text">Live</span></button>
+</header>
+
+<main class="layout">
+  <div class="left">
+  <section class="card line-card">
+    <div class="card-head"><h2 class="cond">Production line</h2>
+      <div class="head-ctl"><span class="mono" id="line-status" style="font-size:.8rem;color:var(--muted)">IDLE</span>
+        <button class="primary" id="btn-run">Pause</button>
+        <select id="speed" aria-label="Line speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select></div></div>
+    <div class="scene-wrap" id="scene-wrap">
+      <div class="scene" id="scene">
+        <div class="floor-label" style="left:20px;top:108px">Infeed</div>
+        <div class="floor-label" style="left:330px;top:268px">Inspection station</div>
+        <div class="floor-label" style="left:748px;top:96px">Diverter</div>
+        <div class="belt" id="belt-main" style="left:0;top:140px;width:800px"></div>
+        <div class="belt" id="belt-good" style="left:800px;top:140px;width:400px"></div>
+        <div class="belt reject-diag" id="belt-diag"></div>
+        <div class="belt" id="belt-rej" style="left:905px;top:380px;width:295px"></div>
+        <div class="roller" style="left:4px;top:167px"></div>
+        <div class="roller" style="left:792px;top:167px"></div>
+        <div class="post" style="left:300px;top:40px;height:236px"></div>
+        <div class="post" style="left:530px;top:40px;height:236px"></div>
+        <div class="beam" style="left:296px;top:34px;width:256px"></div>
+        <div class="camera" aria-hidden="true"></div>
+        <div class="floor-label cam-label">Cam 01</div>
+        <div class="ai-node mono">→ AI pipeline</div>
+        <div class="tower" aria-hidden="true"><span class="r" id="t-r"></span><span class="a" id="t-a"></span><span class="g" id="t-g"></span></div>
+        <div class="gate-post"></div>
+        <div class="gate" id="gate"></div>
+        <div class="bin good" style="left:1096px;top:118px;height:114px"><div class="n" id="bin-good">0</div><div class="t">GOOD</div></div>
+        <div class="bin rej" style="left:1096px;top:358px;height:114px"><div class="n" id="bin-rej">0</div><div class="t">REJECT</div></div>
+        <div class="flash" id="flash"></div>
+        <div class="packet" id="packet"></div>
+      </div>
+    </div>
+  </section>
+  <div class="bottom-row">
+    <section class="card">
+      <div class="card-head"><h2 class="cond">Line log</h2><span class="mono" style="font-size:.75rem;color:var(--muted)">PLC events</span></div>
+      <ol class="log mono" id="log" aria-label="Line event log"></ol>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2 class="cond">Written specification</h2><span class="mono" style="font-size:.75rem;color:var(--muted)">edit → re-applied instantly</span></div>
+      <div class="rules-box">
+        <ul class="rules" id="rules" aria-label="Rules"></ul>
+        <div class="rule-add">
+          <select id="new-type" aria-label="Rule to add">
+            <option value="each_exact">Each compartment holds exactly N</option>
+            <option value="each_max">Each compartment holds at most N</option>
+            <option value="each_min">Each compartment holds at least N</option>
+            <option value="cell_exact">One compartment holds exactly N</option>
+            <option value="row_total">A row holds exactly N in total</option>
+            <option value="col_total">A column holds exactly N in total</option>
+            <option value="box_exact">The box holds exactly N in total</option>
+            <option value="box_range">The box holds between A and B</option>
+            <option value="walls">Every compartment is enclosed by walls</option>
+            <option value="color_all">Every pushpin is a given colour</option>
+            <option value="color_same">All pushpins are the same colour</option>
+          </select>
+          <button type="button" id="add-rule">+ Add rule</button>
+        </div>
+        <div class="rule sens"><span class="mono" style="font-size:.75rem;color:var(--muted)">SENSITIVITY</span>
+          <input type="range" id="thr" min="0.05" max="0.95" step="0.05" value="0.5" aria-label="Flag threshold">
+          <span class="chip" style="min-width:0">P &gt; <span id="thr-v">0.50</span></span></div>
+      </div>
+    </section>
+  </div>
+  </div>
+
+  <aside class="card pipe" aria-label="AI pipeline">
+    <div class="card-head"><h2 class="cond">AI pipeline</h2><span class="mono" id="cur-id" style="font-size:.8rem;color:var(--muted)">waiting for a box</span></div>
+    <div class="shot">
+      <canvas id="shot" width="850" height="500" aria-label="Captured image with inspection overlay"></canvas>
+      <div class="shot-cap"><span id="shot-variant">–</span><span id="shot-truth">–</span></div>
+    </div>
+    <div class="pipe-body">
+    <ol class="steps" id="steps">
+      <li data-k="clamp"><span class="ic"></span><span>Clamp box (4 arms)</span><span class="ms"></span></li>
+      <li data-k="capture"><span class="ic"></span><span>Capture image</span><span class="ms"></span></li>
+      <li data-k="locate"><span class="ic"></span><span>Locate compartments</span><span class="ms"></span></li>
+      <li data-k="checks"><span class="ic"></span><span>15 checks · Gemma 4</span><span class="ms"></span></li>
+      <li data-k="walls"><span class="ic"></span><span>Wall check</span><span class="ms"></span></li>
+      <li data-k="rules"><span class="ic"></span><span>Apply written rules</span><span class="ms"></span></li>
+      <li data-k="signal"><span class="ic"></span><span>Signal line → diverter</span><span class="ms"></span></li>
+    </ol>
+    <div class="side">
+    <div class="matrix" id="matrix" aria-label="Compartment results"></div>
+    <div class="verdict" id="verdict" aria-live="polite"><div class="head">—</div><div style="color:var(--muted);font-size:.88rem">The first box is on its way.</div></div>
+    </div>
+    </div>
+  </aside>
+</main>
+<footer class="foot"><span class="note" id="mode-note"></span><span>Images: MVTec LOCO AD pushpins (CC BY-NC-SA 4.0, © MVTec Software GmbH) · colour and lighting variants are synthetic edits</span></footer>
+</div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

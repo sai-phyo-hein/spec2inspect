@@ -1,0 +1,41 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# --- Node (type checking and tests only) ---
+node_modules/
+npm-debug.log*
+
+# --- Data and model files: downloaded at build or run time, never committed ---
+web/replay/
+web/public/replay/
+web/replay_bundle.tar.gz
+data/
+.cache/
+*.tar.gz
+*.tar.xz
+*.gguf
+
+# --- Secrets: tokens and service-account keys must never be committed ---
+.env
+.env.*
+*.pem
+*.key
+*service-account*.json
+*credentials*.json
+
+# --- Firebase and Google Cloud local state ---
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# --- Editors and OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
