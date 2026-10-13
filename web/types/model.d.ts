@@ -11,7 +11,9 @@ export interface Wall { o: "v" | "h"; r: number; c: number; strength: number; }
 
 /** One recorded (or live) inspection of a box image. */
 export interface Entry {
-  entry: string; img_id: string; label: 0 | 1;
+  entry: string; img_id: string;
+  /** dataset ground truth: 0 good, 1 logical anomaly, null for an uploaded photo */
+  label: 0 | 1 | null;
   color: string; stops: number;
   rows: number; cols: number; xs: number[]; ys: number[]; grid_strength: number;
   cells: Cell[]; walls: Wall[];
@@ -60,14 +62,21 @@ export type BoxPhase = "infeed" | "station" | "toDiverter" | "good" | "reject" |
 export interface Box {
   id: number; entry: Entry; el: HTMLDivElement; x: number; y: number; phase: BoxPhase;
   image: BoxImage | null; result: Evaluation | null; colors?: (string | null)[];
-  revealed: number; dist: number; removing?: boolean; isLive?: boolean; liveSeconds?: number;
+  revealed: number; dist: number; removing?: boolean;
+  /** an uploaded photo inspected live (not from the recording) */
+  upload?: boolean; liveSeconds?: number;
 }
 
 export interface LineState {
   mode: "replay" | "live";
-  entries: Entry[]; playlist: Entry[]; pos: number; imgUrl: ((e: Entry) => string) | null; replayNote: string;
+  entries: Entry[]; playlist: Entry[]; pos: number; imgUrl: ((e: Entry) => string) | null;
   running: boolean; speed: number; live: boolean;
+  /** infeed held while an uploaded photo is placed at, or inspected at, the camera */
+  hold: boolean;
   inspected: number; passed: number; failed: number; agreeN: number; agreeOk: number; runMs: number;
   binGood: number; binRej: number;
   station: Box | null; lastDone: Box | null;
 }
+
+/** A photo in the Live-mode tray: a sample from the Hugging Face dataset (or the recording), or one the user uploaded. */
+export interface TrayItem { name: string; url: string; kind: "sample" | "yours"; }

@@ -6,6 +6,8 @@ import { state } from "./state.js";
 import { boxImage } from "./data.js";
 import { log, updateKpis } from "./log.js";
 /** @typedef {import("../../types/model").Box} Box */
+/** @typedef {import("../../types/model").BoxImage} BoxImage */
+/** @typedef {import("../../types/model").Entry} Entry */
 
 const scene = $("scene"), wrap = $("scene-wrap"), stage = $("stage");
 /** @type {{ rod: HTMLElement, reach: number }[]} */ let arms = [];
@@ -77,6 +79,31 @@ function spawn() {
 /** @param {Box} b */
 const place = (b) => { b.el.style.transform = `translate(${b.x - BOX_W / 2}px, ${b.y - BOX_H / 2}px)`; };
 
+/** @type {{ image: BoxImage, onPlaced: (box: Box) => void } | null} */ let pendingUpload = null;
+
+/** Place an uploaded photo at the camera as soon as the station is clear. @param {BoxImage} image @param {(box: Box) => void} onPlaced */
+export function requestUploadPlacement(image, onPlaced) { pendingUpload = { image, onPlaced }; }
+export function cancelUploadPlacement() { pendingUpload = null; }
+
+function placeUpload() {
+  if (!pendingUpload) return;
+  const clear = !state.station && boxes.every((b) => b.phase !== "toDiverter" || b.x > STATION_X + BOX_W);
+  if (!clear) return;
+  const { image, onPlaced } = pendingUpload; pendingUpload = null;
+  const el = document.createElement("div"); el.className = "box uploaded";
+  el.innerHTML = `<canvas width="300" height="176"></canvas><div class="scan"></div><div class="stamp"></div>`;
+  el.querySelector("canvas")?.getContext("2d")?.drawImage(image.canvas, 0, 0, 300, 176);
+  scene.insertBefore(el, $("flash"));
+  /** @type {Entry} placeholder until the GPU analysis arrives */
+  const entry = { entry: "upload", img_id: "uploaded photo", label: null, color: "Uploaded", stops: 0,
+                  rows: 3, cols: 5, xs: [], ys: [], grid_strength: 0, cells: [], walls: [] };
+  /** @type {Box} */
+  const b = { id: nextId++, entry, el, x: STATION_X, y: BELT_Y, phase: "station", image, result: null, revealed: 0, dist: 0, upload: true };
+  boxes.push(b); place(b); state.station = b;
+  log(`box <b>#${b.id + 1}</b> <span class="info">your photo is at Cam 01</span>`);
+  onPlaced(b);
+}
+
 /** Point at distance d along a polyline, and whether its end was reached. @param {number[][]} path @param {number} d @returns {[number, number, boolean]} */
 function along(path, d) {
   for (let i = 0; i < path.length - 1; i++) {
@@ -109,18 +136,22 @@ export function startLine(onArrive) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (state.running) {
       state.runMs += dt * 1000;
-      const v = BELT_SPEED * state.speed * dt, mainMoving = !state.station;
+      const v = BELT_SPEED * state.speed * dt, mainMoving = !state.station && !state.hold;
       if (mainMoving) beltOffset += v;
       laneOffset += v;
       $("belt-main").style.backgroundPosition = `${beltOffset}px 0`;
       ["belt-good", "belt-rej", "belt-diag"].forEach((id) => { $(id).style.backgroundPosition = `${laneOffset}px 0`; });
-      if (mainMoving) {
-        for (const b of boxes.filter((x) => x.phase === "infeed" || x.phase === "toDiverter")) {
-          if (b.phase === "infeed" && b.x + v >= STATION_X) { b.x = STATION_X; place(b); onArrive(b); break; }
+      if (mainMoving) {                                    // infeed waits while the station is busy or held
+        for (const b of boxes.filter((x) => x.phase === "infeed")) {
+          if (b.x + v >= STATION_X) { b.x = STATION_X; place(b); onArrive(b); break; }
           b.x += v;
-          if (b.phase === "toDiverter" && b.x >= DIVERT_X) divert(b);
         }
       }
+      for (const b of boxes.filter((x) => x.phase === "toDiverter")) {   // inspected boxes always move on
+        b.x += v;
+        if (b.x >= DIVERT_X) divert(b);
+      }
+      placeUpload();
       for (const b of boxes) {
         if (b.phase === "good") {
           b.x += v;

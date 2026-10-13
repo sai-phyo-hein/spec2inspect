@@ -15,6 +15,20 @@ export function clearShot(message = "waiting for capture…") {
   g.fillText(message, shot.width * 0.32, shot.height * 0.52);
 }
 
+/** Show a photo with no overlay (an upload before analysis). @param {import("../../types/model").BoxImage} image */
+export function showImage(image) {
+  const W = shot.width, H = Math.round(W * image.h / image.w);
+  if (shot.height !== H) shot.height = H;
+  g.drawImage(image.canvas, 0, 0, W, H);
+}
+
+/** A message in the verdict box (instructions, progress, errors). @param {string} head @param {string} html @param {"" | "pass" | "fail"} [kind] */
+export function setVerdictMessage(head, html, kind = "") {
+  const v = $("verdict");
+  v.className = "verdict" + (kind ? " " + kind : "");
+  v.innerHTML = `<div class="head">${head}</div><div style="font-size:.88rem;color:var(--muted)">${html}</div>`;
+}
+
 /**
  * Draw the captured image with overlays.
  * @param {Box} box

@@ -1,5 +1,5 @@
 // @ts-check
-// Line event log, KPI bar and mode badge.
+// Line event log, KPI bar and the Replay / Live switch state.
 import { $ } from "./dom.js";
 import { state } from "./state.js";
 
@@ -21,11 +21,11 @@ export function updateKpis() {
   $("bin-rej").textContent = String(state.binRej);
 }
 
-/** @param {"replay" | "live"} mode @param {string} note */
+/** Show the mode on the switch and the matching note in the footer. @param {"replay" | "live"} mode @param {string} note */
 export function setMode(mode, note) {
   state.mode = mode;
-  $("mode-text").textContent = mode === "live" ? "Live · GPU" : "Replay";
-  $("mode-badge").classList.toggle("liveon", mode === "live");
-  $("mode-badge").classList.toggle("live", true);
+  for (const [id, on] of [["mode-replay", mode === "replay"], ["mode-live", mode === "live"]]) {
+    const b = $(/** @type {string} */ (id)); b.classList.toggle("on", /** @type {boolean} */ (on)); b.setAttribute("aria-checked", String(on));
+  }
   $("mode-note").innerHTML = note;
 }

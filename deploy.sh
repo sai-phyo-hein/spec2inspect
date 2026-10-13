@@ -1,7 +1,7 @@
 #!/bin/bash
 # Two Cloud Run services:
 #   spec-gpu  private, 1x L4, scales to zero; only the web page's service account may call it
-#   spec-web  public, CPU only, replays the Kaggle recording; calls spec-gpu only for "Run live" on an upload
+#   spec-web  public, CPU only, replays the Kaggle recording; calls spec-gpu only when an uploaded photo is inspected
 set -euo pipefail
 PROJECT="${PROJECT:-$(gcloud config get-value project)}"
 REGION="${REGION:-asia-southeast1}"
@@ -61,7 +61,7 @@ gcloud run deploy spec-web --image "$AR/spec-web:latest" --region "$REGION" \
   --service-account "$WEB_SA" --cpu 1 --memory 2Gi --execution-environment gen2 \
   --add-volume "name=replay,type=cloud-storage,bucket=${REPLAY_BUCKET},readonly=true" \
   --add-volume-mount "volume=replay,mount-path=/app/replay" \
-  --min-instances 0 --max-instances 2 --timeout 3600 --session-affinity \
+  --min-instances 0 --max-instances 1 --timeout 3600 --session-affinity \
   --set-env-vars "$ENV_VARS" --port 8080 --allow-unauthenticated
 
 echo "Web page: $(gcloud run services describe spec-web --region "$REGION" --format 'value(status.url)')"

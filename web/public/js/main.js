@@ -6,7 +6,8 @@ import { createRuleSet } from "./rules.js";
 import { loadReplay } from "./data.js";
 import { drawMatrix } from "./panel.js";
 import { initSpecEditor } from "./spec-editor.js";
-import { initLive } from "./live.js";
+import { initModeSwitch } from "./mode.js";
+import { initUpload, cancelUpload } from "./upload.js";
 import { initStation, inspect, reapplyRules } from "./station.js";
 import { startLine } from "./scene.js";
 import { setMode, log } from "./log.js";
@@ -25,10 +26,8 @@ $select("speed").addEventListener("change", (e) => { state.speed = parseFloat(/*
 
 try {
   const idx = await loadReplay();
-  state.replayNote = `<b>Replaying</b> Gemma 4 E4B answers recorded on Kaggle (${(idx.recorded || "").slice(0, 10)}); ` +
-                     `rules re-applied live. <a href="inspect/">Inspect your own photo →</a>`;
-  setMode("replay", state.replayNote);
-  await initLive();
+  await initUpload();
+  await initModeSwitch((idx.recorded || "").slice(0, 10), cancelUpload);
   startLine(inspect);
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e);

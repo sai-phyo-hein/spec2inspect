@@ -27,8 +27,10 @@
     <div class="kpi"><div class="v" id="k-agree">–</div><div class="l" title="Agreement with the dataset labels, which follow the original spec">Matches dataset</div></div>
     <div class="kpi"><div class="v" id="k-rate">0.0</div><div class="l">Boxes / min</div></div>
   </div>
-  <span class="badge" id="mode-badge"><span class="dot"></span><span id="mode-text">Preview</span></span>
-  <button type="button" id="btn-live" class="live-btn" disabled title="Live mode runs on the Cloud Run deployment (GPU service)"><span class="ldot"></span><span id="live-text">Live</span></button>
+  <div class="mode-switch" role="radiogroup" aria-label="Mode">
+    <button type="button" role="radio" id="mode-replay" class="on" aria-checked="true" title="Replay inspections recorded with Gemma 4">Replay</button>
+    <button type="button" role="radio" id="mode-live" aria-checked="false" disabled title="Live needs the deployed GPU service"><span class="ldot"></span>Live</button>
+  </div>
 </header>
 
 <main class="layout">
@@ -36,8 +38,15 @@
   <section class="card line-card">
     <div class="card-head"><h2 class="cond">Production line</h2>
       <div class="head-ctl"><span class="mono" id="line-status" style="font-size:.8rem;color:var(--muted)">IDLE</span>
-        <button class="primary" id="btn-run">Pause</button>
-        <select id="speed" aria-label="Line speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select></div></div>
+        <span class="ctl-group" id="replay-ctl">
+          <button class="primary" id="btn-run">Pause</button>
+          <select id="speed" aria-label="Line speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select>
+        </span>
+        <span class="ctl-group" id="live-ctl" hidden>
+          <button class="primary" id="btn-upload">Upload</button>
+          <input type="file" id="file-upload" accept="image/png,image/jpeg" hidden>
+          <button id="btn-inspect" disabled>Inspect</button>
+        </span></div></div>
     <div class="scene-wrap" id="scene-wrap">
       <div class="scene" id="scene">
         <div class="floor-label" style="left:20px;top:108px">Infeed</div>
@@ -61,14 +70,22 @@
         <div class="bin good" style="left:1096px;top:118px;height:114px"><div class="n" id="bin-good">0</div><div class="t">GOOD</div></div>
         <div class="bin rej" style="left:1096px;top:358px;height:114px"><div class="n" id="bin-rej">0</div><div class="t">REJECT</div></div>
         <div class="flash" id="flash"></div>
+        <div class="drop-hint" id="drop-hint" aria-hidden="true">Drop photo here</div>
         <div class="packet" id="packet"></div>
       </div>
     </div>
   </section>
   <div class="bottom-row">
     <section class="card">
-      <div class="card-head"><h2 class="cond">Line log</h2><span class="mono" style="font-size:.75rem;color:var(--muted)">PLC events</span></div>
-      <ol class="log mono" id="log" aria-label="Line event log"></ol>
+      <div class="card-head">
+        <div class="tabs" role="tablist" aria-label="Left panel">
+          <button type="button" role="tab" id="tab-photos" aria-selected="false" hidden>Photos</button>
+          <button type="button" role="tab" id="tab-log" aria-selected="true" class="on">Line log</button>
+        </div>
+        <span class="mono" id="tray-hint" style="font-size:.75rem;color:var(--muted)">PLC events</span>
+      </div>
+      <div class="tray" id="tray" role="tabpanel" aria-label="Photos to inspect" hidden></div>
+      <ol class="log mono" id="log" role="tabpanel" aria-label="Line event log"></ol>
     </section>
     <section class="card">
       <div class="card-head"><h2 class="cond">Written specification</h2><span class="mono" style="font-size:.75rem;color:var(--muted)">edit → re-applied instantly</span></div>
