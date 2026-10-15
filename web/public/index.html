@@ -20,17 +20,27 @@
       <p>Spec-to-Inspection · written rules, no training images · Gemma 4 E4B</p>
     </div>
   </div>
-  <div class="kpis" aria-live="polite">
+  <div class="kpis" id="kpis" aria-live="polite">
     <div class="kpi"><div class="v" id="k-insp">0</div><div class="l">Inspected</div></div>
     <div class="kpi ok"><div class="v" id="k-pass">0</div><div class="l">Passed</div></div>
     <div class="kpi bad"><div class="v" id="k-fail">0</div><div class="l">Rejected</div></div>
     <div class="kpi"><div class="v" id="k-agree">–</div><div class="l" title="Agreement with the dataset labels, which follow the original spec">Matches dataset</div></div>
     <div class="kpi"><div class="v" id="k-rate">0.0</div><div class="l">Boxes / min</div></div>
   </div>
-  <div class="mode-switch" role="radiogroup" aria-label="Mode">
+  <div class="mode-switch" id="mode-switch" role="radiogroup" aria-label="Mode">
     <button type="button" role="radio" id="mode-replay" class="on" aria-checked="true" title="Replay inspections recorded with Gemma 4">Replay</button>
     <button type="button" role="radio" id="mode-live" aria-checked="false" disabled title="Live needs the deployed GPU service"><span class="ldot"></span>Live</button>
     <button type="button" role="radio" id="mode-check" aria-checked="false" title="Results of the photos you inspected live">Check</button>
+  </div>
+  <div class="view-menu" id="view-menu">
+    <button type="button" class="gear" id="view-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="view-list" title="Switch view">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.43 7.43 0 0 0 .05-.94 7.43 7.43 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.43 7.43 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+      <span class="view-label" id="view-label">Production line</span>
+    </button>
+    <ul class="view-list" id="view-list" role="menu" hidden>
+      <li><button type="button" role="menuitemradio" data-view="line" aria-checked="true">Production line</button></li>
+      <li><button type="button" role="menuitemradio" data-view="admin" aria-checked="false">Admin · rule builder</button></li>
+    </ul>
   </div>
 </header>
 
@@ -43,11 +53,7 @@
           <button class="primary" id="btn-run">Pause</button>
           <select id="speed" aria-label="Line speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select>
         </span>
-        <span class="ctl-group" id="live-ctl" hidden>
-          <button class="primary" id="btn-upload">Upload</button>
-          <input type="file" id="file-upload" accept="image/png,image/jpeg" hidden>
-          <button id="btn-inspect" disabled>Inspect</button>
-        </span></div></div>
+        <span class="mono live-status" id="live-status" hidden>LIVE · DROP A PHOTO AT THE INFEED</span></div></div>
     <div class="scene-wrap" id="scene-wrap">
       <div class="scene" id="scene">
         <div class="floor-label" style="left:20px;top:108px">Infeed</div>
@@ -71,7 +77,11 @@
         <div class="bin good" style="left:1096px;top:118px;height:114px"><div class="n" id="bin-good">0</div><div class="t">GOOD</div></div>
         <div class="bin rej" style="left:1096px;top:358px;height:114px"><div class="n" id="bin-rej">0</div><div class="t">REJECT</div></div>
         <div class="flash" id="flash"></div>
-        <div class="drop-hint" id="drop-hint" aria-hidden="true">Drop photo here</div>
+        <div class="drop-zone" id="drop-zone" hidden>
+          <div class="dz-text" id="dz-text">Drop a photo here</div>
+          <button type="button" class="primary" id="btn-upload">Upload</button>
+          <input type="file" id="file-upload" accept="image/png,image/jpeg" hidden>
+        </div>
         <div class="packet" id="packet"></div>
       </div>
     </div>
@@ -89,28 +99,10 @@
       <ol class="log mono" id="log" role="tabpanel" aria-label="Line event log"></ol>
     </section>
     <section class="card">
-      <div class="card-head"><h2 class="cond">Written specification</h2><span class="mono" style="font-size:.75rem;color:var(--muted)">edit → re-applied instantly</span></div>
+      <div class="card-head"><h2 class="cond">Written specification</h2><span class="mono" id="spec-badge" style="font-size:.75rem;color:var(--muted)"></span></div>
       <div class="rules-box">
-        <ul class="rules" id="rules" aria-label="Rules"></ul>
-        <div class="rule-add">
-          <select id="new-type" aria-label="Rule to add">
-            <option value="each_exact">Each compartment holds exactly N</option>
-            <option value="each_max">Each compartment holds at most N</option>
-            <option value="each_min">Each compartment holds at least N</option>
-            <option value="cell_exact">One compartment holds exactly N</option>
-            <option value="row_total">A row holds exactly N in total</option>
-            <option value="col_total">A column holds exactly N in total</option>
-            <option value="box_exact">The box holds exactly N in total</option>
-            <option value="box_range">The box holds between A and B</option>
-            <option value="walls">Every compartment is enclosed by walls</option>
-            <option value="color_all">Every pushpin is a given colour</option>
-            <option value="color_same">All pushpins are the same colour</option>
-          </select>
-          <button type="button" id="add-rule">+ Add rule</button>
-        </div>
-        <div class="rule sens"><span class="mono" style="font-size:.75rem;color:var(--muted)">SENSITIVITY</span>
-          <input type="range" id="thr" min="0.05" max="0.95" step="0.05" value="0.5" aria-label="Flag threshold">
-          <span class="chip" style="min-width:0">P &gt; <span id="thr-v">0.50</span></span></div>
+        <ul class="rules" id="line-rules" aria-label="Approved rules"></ul>
+        <p class="spec-foot mono"><span id="line-plan"></span> · sensitivity P &gt; <span id="line-thr">0.50</span> · <span id="line-acc"></span> · edit in <b>Admin</b></p>
       </div>
     </section>
   </div>
@@ -139,6 +131,68 @@
     </div>
   </aside>
 </main>
+<section class="admin-page" id="admin-page" hidden aria-label="Rule builder">
+  <div class="admin-head">
+    <div><h2 class="cond">Rule builder</h2><p class="muted" id="ad-status"></p></div>
+    <div class="admin-actions">
+      <button type="button" id="ad-discard">Discard draft</button>
+      <button type="button" class="primary" id="ad-approve">Approve for the line</button>
+    </div>
+  </div>
+  <div class="admin-grid">
+    <div class="admin-col">
+      <section class="card">
+        <div class="card-head"><h2 class="cond">1 · Inputs</h2><span class="mono muted" style="font-size:.75rem">from the engineer</span></div>
+        <div class="ad-inputs">
+          <label>Written specification<textarea id="ad-spec" rows="4" spellcheck="false"></textarea></label>
+          <label>Sample image <span class="muted">(an empty container, mock items, or a real photo)</span><select id="ad-sample"></select></label>
+          <div class="ad-run">
+            <label>Planner model
+              <select id="ad-model">
+                <option value="gemini-3.5-pro" selected>gemini-3.5-pro</option>
+              </select></label>
+            <button type="button" class="primary" id="ad-process">Process</button>
+          </div>
+          <p class="muted ad-model-note">Process sends the specification and the sample image to Gemini on Vertex AI. Its plan is validated, then verified below; nothing reaches the line until you approve it.</p>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2 class="cond">2 · Planner output</h2><span class="next-tag" id="ad-out-tag">planner output</span></div>
+        <div class="ad-plan">
+          <div class="plan-line"><b>Region program (JSON)</b><span class="muted">how each photo is divided · executed by the line</span>
+            <button type="button" class="link" id="ad-edit-prog">Edit</button></div>
+          <textarea id="ad-prog" class="json mono" rows="9" readonly spellcheck="false" aria-label="Region program JSON"></textarea>
+          <p class="json-error mono" id="ad-prog-error"></p>
+          <div class="plan-line"><span class="muted">Resolved on the sample:</span><span id="ad-plan-text" class="mono"></span></div>
+          <div class="plan-line"><b>Rules (JSON)</b><span class="muted">what each region must satisfy · executed by the line</span>
+            <button type="button" class="link" id="ad-edit-json">Edit</button></div>
+          <textarea id="ad-json" class="json mono" rows="10" readonly spellcheck="false" aria-label="Rules JSON"></textarea>
+          <p class="json-error mono" id="ad-json-error"></p>
+          <ol class="rule-sentences" id="ad-rule-list" aria-label="Rules in plain words"></ol>
+          <p class="plan-notes" id="ad-plan-notes" hidden></p>
+        </div>
+      </section>
+    </div>
+    <div class="admin-col">
+      <section class="card">
+        <div class="card-head"><h2 class="cond">3 · Verification</h2><span class="mono muted" style="font-size:.75rem">sample divided into regions</span></div>
+        <div class="sample-box"><canvas id="ad-canvas" width="760" height="447" aria-label="Sample photo divided into regions"></canvas>
+          <p class="mono muted" id="ad-sample-note"></p></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2 class="cond">Accuracy report</h2>
+          <div class="row">
+            <select id="ad-imageset" aria-label="Images">
+              <option value="recorded">Recorded test images (labelled)</option>
+              <option value="mock">Mock / sample photos (no labels)</option>
+            </select>
+            <label class="chk"><input type="checkbox" id="ad-measure" checked> Measure accuracy</label>
+          </div></div>
+        <div class="acc-box" id="ad-accuracy"></div>
+      </section>
+    </div>
+  </div>
+</section>
 <section class="check-page" id="check-page" hidden aria-label="Results of uploaded photos">
   <div class="check-head">
     <div class="check-kpis">
@@ -146,6 +200,7 @@
       <div class="kpi ok"><div class="v" id="ck-pass">0</div><div class="l">Passed</div></div>
       <div class="kpi bad"><div class="v" id="ck-fail">0</div><div class="l">Rejected</div></div>
       <div class="kpi"><div class="v" id="ck-secs">–</div><div class="l">Avg time on GPU</div></div>
+      <span class="mono check-source" id="ck-source"></span>
     </div>
     <div class="check-actions">
       <div class="tabs" id="check-filter" role="group" aria-label="Filter">

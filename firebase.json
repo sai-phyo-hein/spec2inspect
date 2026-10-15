@@ -1,0 +1,14 @@
+{
+  "hosting": {
+    "public": "web/public",
+    "ignore": ["**/.*", "**/node_modules/**", "replay/**"],
+    "rewrites": [
+      { "source": "/api/**",    "run": { "serviceId": "spec-web", "region": "asia-southeast1" } },
+      { "source": "/replay/**", "run": { "serviceId": "spec-web", "region": "asia-southeast1" } }
+    ],
+    "headers": [
+      { "source": "**/*.@(js|css|html)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }] }
+    ]
+  },
+  "firestore": { "rules": "firestore.rules" }
+}

@@ -1,6 +1,6 @@
 // @ts-check
 // Live mode: the photo tray in the left panel. Sample photos plus every photo the user uploads; drag one onto the
-// production line (or click it) to place it at the camera.
+// drop zone at the start of the conveyor (or click it) to send it down the line.
 import { $ } from "./dom.js";
 import { state } from "./state.js";
 /** @typedef {import("../../types/model").TrayItem} TrayItem */
@@ -12,7 +12,7 @@ import { state } from "./state.js";
 function thumb(item) {
   const b = document.createElement("button");
   b.type = "button"; b.className = "thumb" + (item.kind === "yours" ? " yours" : ""); b.draggable = true;
-  b.title = `${item.name}: drag onto the line, or click, to inspect it`;
+  b.title = `${item.name}: drag onto the drop zone at the infeed, or click, to inspect it`;
   b.innerHTML = `<img alt="" loading="lazy"><span class="tag2"></span>`;
   /** @type {HTMLImageElement} */ (b.querySelector("img")).src = item.url;
   /** @type {HTMLElement} */ (b.querySelector(".tag2")).textContent = item.kind === "yours" ? `yours · ${item.name}` : item.name;
@@ -29,8 +29,11 @@ function thumb(item) {
 function render() {
   const tray = $("tray"); tray.innerHTML = "";
   items.forEach((it) => tray.appendChild(thumb(it)));
-  $("tray-hint").textContent = state.live ? `${items.length} photos · drag to the line` : "PLC events";
+  $("tray-hint").textContent = state.live ? `${items.length} photos · drag to the infeed` : "PLC events";
 }
+
+/** Sample photos currently in the tray (for the Admin page's region preview). */
+export const trayItems = () => items.slice();
 
 /** Add a photo to the front of the tray (uploads go first). @param {TrayItem} item */
 export function addToTray(item) { items.unshift(item); render(); }
@@ -61,7 +64,7 @@ function select(tab) {
   for (const [id, on] of [["tab-photos", tab === "photos"], ["tab-log", tab === "log"]]) {
     const b = $(/** @type {string} */ (id)); b.classList.toggle("on", /** @type {boolean} */ (on)); b.setAttribute("aria-selected", String(on));
   }
-  $("tray-hint").textContent = tab === "photos" ? `${items.length} photos · drag to the line` : "PLC events";
+  $("tray-hint").textContent = tab === "photos" ? `${items.length} photos · drag to the infeed` : "PLC events";
 }
 
 /** @param {(item: TrayItem) => void} pick called when a photo is dropped on the line or clicked */
@@ -69,11 +72,11 @@ export async function initTray(pick) {
   onPick = pick;
   $("tab-photos").addEventListener("click", () => select("photos"));
   $("tab-log").addEventListener("click", () => select("log"));
-  const wrap = $("scene-wrap");                                 // the production line is the drop target
-  wrap.addEventListener("dragover", (e) => { if (!state.live) return; e.preventDefault(); wrap.classList.add("dropping"); });
-  wrap.addEventListener("dragleave", (e) => { if (!wrap.contains(/** @type {Node} */ (e.relatedTarget))) wrap.classList.remove("dropping"); });
-  wrap.addEventListener("drop", (e) => {
-    wrap.classList.remove("dropping");
+  const zone = $("drop-zone");                                  // the start of the conveyor is the drop target
+  zone.addEventListener("dragover", (e) => { if (!state.live) return; e.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (e) => {
+    zone.classList.remove("over");
     if (!state.live) return;
     e.preventDefault();
     const it = items[parseInt(e.dataTransfer?.getData("text/plain") || "-1", 10)];

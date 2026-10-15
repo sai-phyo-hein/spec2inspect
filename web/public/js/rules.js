@@ -31,6 +31,54 @@ export const RULE_DEFS = {
   color_same: { p: {}, t: "All pushpins are the same colour", k: "pixel colour" },
 };
 
+/** Which checker answers each rule type (shown in the rules JSON and the inspection script). */
+/** @type {Record<RuleType, string>} */
+export const CHECKERS = {
+  each_exact: "gemma4.count", each_max: "gemma4.count", each_min: "gemma4.count", cell_exact: "gemma4.count",
+  row_total: "gemma4.count-sum", col_total: "gemma4.count-sum", box_exact: "gemma4.count-sum", box_range: "gemma4.count-sum",
+  walls: "geometry.wall-line", color_all: "pixels.pin-hue", color_same: "pixels.pin-hue",
+};
+
+/** A rule as a plain sentence, e.g. "Each compartment holds exactly 1 pin(s)". @param {Rule} r */
+export const describeRule = (r) => RULE_DEFS[r.type].t.replace(/\{(\w+)\}/g, (_, k) => String(r.p[/** @type {keyof RuleParams} */ (k)] ?? ""));
+
+/** The rules JSON the line executes (what the Inspection Planner will generate). @param {Rule[]} rules @param {number} threshold */
+export function rulesToJson(rules, threshold) {
+  return JSON.stringify({
+    sensitivity: threshold,
+    rules: rules.map((r, i) => ({ id: `R${i + 1}`, type: r.type, params: r.p, checker: CHECKERS[r.type], ...(r.on ? {} : { on: false }) })),
+  }, null, 2);
+}
+
+/**
+ * Parse and validate rules JSON. Throws an Error with a readable message if anything is wrong.
+ * @param {string} text @returns {{ rules: RuleSet, threshold: number }}
+ */
+export function parseRulesJson(text) {
+  /** @type {any} */ let doc;
+  try { doc = JSON.parse(text); } catch (e) { throw new Error(`not valid JSON: ${e instanceof Error ? e.message : e}`); }
+  if (!doc || !Array.isArray(doc.rules)) throw new Error(`expected an object with a "rules" array`);
+  if (doc.rules.length < 1 || doc.rules.length > 30) throw new Error(`between 1 and 30 rules are allowed`);
+  const threshold = doc.sensitivity ?? 0.5;
+  if (typeof threshold !== "number" || threshold < 0.05 || threshold > 0.95) throw new Error(`"sensitivity" must be a number from 0.05 to 0.95`);
+  const set = createRuleSet([]);
+  doc.rules.forEach((/** @type {any} */ r, /** @type {number} */ i) => {
+    const where = `rule ${i + 1}${r && r.id ? ` (${r.id})` : ""}`;
+    if (!r || typeof r !== "object") throw new Error(`${where}: must be an object`);
+    if (!(r.type in RULE_DEFS)) throw new Error(`${where}: unknown type "${r.type}"`);
+    const type = /** @type {RuleType} */ (r.type), allowed = Object.keys(RULE_DEFS[type].p), params = r.params ?? {};
+    for (const [k, v] of Object.entries(params)) {
+      if (!allowed.includes(k)) throw new Error(`${where}: "${type}" has no parameter "${k}" (allowed: ${allowed.join(", ") || "none"})`);
+      if (k === "col") { if (!COLOURS.includes(/** @type {string} */ (v))) throw new Error(`${where}: colour must be one of ${COLOURS.join(", ")}`); }
+      else if (!Number.isInteger(v) || /** @type {number} */ (v) < 0 || /** @type {number} */ (v) > 99) throw new Error(`${where}: "${k}" must be a whole number from 0 to 99`);
+    }
+    if (r.checker !== undefined && r.checker !== CHECKERS[type]) throw new Error(`${where}: "${type}" is answered by "${CHECKERS[type]}", not "${r.checker}"`);
+    set.add(type, params);
+    set.items[set.items.length - 1].on = r.on !== false;
+  });
+  return { rules: set, threshold };
+}
+
 /** @param {RuleType[]} [types] @returns {RuleSet} */
 export function createRuleSet(types = ["each_exact", "box_exact", "walls"]) {
   /** @type {RuleSet} */
@@ -59,9 +107,10 @@ const num = (v) => v ?? 0;
  * @param {(string | null)[] | null | undefined} colors pin colour per compartment, if measured
  * @param {Rule[]} rules the written specification, in order (R1, R2, ...)
  * @param {number} threshold flag a compartment when P(violation) exceeds this
+ * @param {number} [wallMin] wall-line strength below which a wall counts as missing (from the region plan)
  * @returns {Evaluation}
  */
-export function evaluate(entry, colors, rules, threshold) {
+export function evaluate(entry, colors, rules, threshold, wallMin = WALL_MIN) {
   const hasModel = entry.cells.some((c) => c.dist);
   /** @type {EvalCell[]} */
   const cells = entry.cells.map((c) => ({ ...c, count: c.dist ? argmax(c.dist) : "–", viol: null, flagged: false }));
@@ -78,7 +127,7 @@ export function evaluate(entry, colors, rules, threshold) {
     if (!rule.on) { status[rule.id] = "off"; return; }
 
     if (rule.type === "walls") {
-      const missing = entry.walls.filter((w) => w.strength < WALL_MIN);
+      const missing = entry.walls.filter((w) => w.strength < wallMin);
       missingAll.push(...missing);
       missing.forEach((w) => findings.push(`${L}: wall ${wallText(w)} is <b>missing</b>`));
       status[rule.id] = missing.length ? "fail" : "pass";

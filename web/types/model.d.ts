@@ -65,6 +65,11 @@ export interface Box {
   revealed: number; dist: number; removing?: boolean;
   /** an uploaded photo inspected live (not from the recording) */
   upload?: boolean; liveSeconds?: number; name?: string;
+  /** set when the box is removed from the line mid-inspection (e.g. switching to Live) */
+  cancelled?: boolean;
+  /** uploads: runs the analysis on the GPU (with progress), and is told when the box is done */
+  analyse?: (progress: (seconds: number) => void) => Promise<Entry>;
+  onDone?: () => void;
 }
 
 export type Mode = "replay" | "live" | "check";
@@ -73,8 +78,6 @@ export interface LineState {
   mode: Mode;
   entries: Entry[]; playlist: Entry[]; pos: number; imgUrl: ((e: Entry) => string) | null;
   running: boolean; speed: number; live: boolean;
-  /** infeed held while an uploaded photo is placed at, or inspected at, the camera */
-  hold: boolean;
   inspected: number; passed: number; failed: number; agreeN: number; agreeOk: number; runMs: number;
   binGood: number; binRej: number;
   station: Box | null; lastDone: Box | null;
@@ -90,4 +93,32 @@ export interface CheckRecord {
   thumb: string;
   failed: boolean; findings: string[]; counts: string[];
   seconds: number | null; rules: string[];
+  /** approved specification version the photo was inspected with */
+  spec_version?: number | null;
+}
+
+/** One step of a region program (the fixed operation set the line can execute). */
+export type RegionStep =
+  | { op: "normalize_light" }
+  | { op: "grid_from_walls"; rows?: number | "auto"; cols?: number | "auto"; inset?: number; max_cells?: number }
+  | { op: "fixed_regions"; regions: { id?: string; box: [number, number, number, number]; row?: number; col?: number }[] }
+  | { op: "wall_segments"; missing_below?: number };
+
+/** How a container is divided into regions: output by the planner, executed by the line. */
+export interface RegionProgram { program: "region-plan/v1"; steps: RegionStep[]; }
+
+/** The layout a program resolved to on a sample (for display). */
+export interface Layout { rows: number; cols: number; }
+
+/** Accuracy of a rule set on labelled images (null when the images are mocks without ground truth). */
+export interface AccuracyReport {
+  images: string; n: number; tp: number; fp: number; tn: number; fn: number;
+  accuracy: number; recall: number; false_alarm: number; auroc: number | null; note?: string;
+}
+
+/** A specification approved on the Admin page; the production line runs the latest one. */
+export interface SpecVersion {
+  version: number; approved_at: string; program: RegionProgram; layout?: Layout | null;
+  rules: { type: RuleType; on: boolean; p: RuleParams }[];
+  threshold: number; accuracy: AccuracyReport | null; spec_text?: string;
 }

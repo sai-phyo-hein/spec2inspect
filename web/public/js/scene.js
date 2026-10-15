@@ -61,7 +61,7 @@ export function packet(up) {
 }
 
 function spawn() {
-  if (!state.playlist.length) return;
+  if (!state.playlist.length || state.mode !== "replay") return;     // recorded boxes only in Replay
   const k = state.pos++, entry = state.playlist[k % state.playlist.length];
   const el = document.createElement("div"); el.className = "box";
   el.innerHTML = `<canvas width="300" height="176"></canvas><div class="scan"></div><div class="stamp"></div>`;
@@ -79,29 +79,36 @@ function spawn() {
 /** @param {Box} b */
 const place = (b) => { b.el.style.transform = `translate(${b.x - BOX_W / 2}px, ${b.y - BOX_H / 2}px)`; };
 
-/** @type {{ image: BoxImage, onPlaced: (box: Box) => void } | null} */ let pendingUpload = null;
-
-/** Place an uploaded photo at the camera as soon as the station is clear. @param {BoxImage} image @param {(box: Box) => void} onPlaced */
-export function requestUploadPlacement(image, onPlaced) { pendingUpload = { image, onPlaced }; }
-export function cancelUploadPlacement() { pendingUpload = null; }
-
-function placeUpload() {
-  if (!pendingUpload) return;
-  const clear = !state.station && boxes.every((b) => b.phase !== "toDiverter" || b.x > STATION_X + BOX_W);
-  if (!clear) return;
-  const { image, onPlaced } = pendingUpload; pendingUpload = null;
+/**
+ * Put an uploaded photo on the belt at the infeed (under the drop zone); it travels to the camera like any box.
+ * @param {BoxImage} image @param {string} name
+ * @param {(progress: (seconds: number) => void) => Promise<Entry>} analyse @param {() => void} onDone
+ */
+export function spawnUpload(image, name, analyse, onDone) {
   const el = document.createElement("div"); el.className = "box uploaded";
   el.innerHTML = `<canvas width="300" height="176"></canvas><div class="scan"></div><div class="stamp"></div>`;
   el.querySelector("canvas")?.getContext("2d")?.drawImage(image.canvas, 0, 0, 300, 176);
   scene.insertBefore(el, $("flash"));
   /** @type {Entry} placeholder until the GPU analysis arrives */
-  const entry = { entry: "upload", img_id: "uploaded photo", label: null, color: "Uploaded", stops: 0,
+  const entry = { entry: "upload", img_id: name, label: null, color: "Uploaded", stops: 0,
                   rows: 3, cols: 5, xs: [], ys: [], grid_strength: 0, cells: [], walls: [] };
   /** @type {Box} */
-  const b = { id: nextId++, entry, el, x: STATION_X, y: BELT_Y, phase: "station", image, result: null, revealed: 0, dist: 0, upload: true };
-  boxes.push(b); place(b); state.station = b;
-  log(`box <b>#${b.id + 1}</b> <span class="info">your photo is at Cam 01</span>`);
-  onPlaced(b);
+  const b = { id: nextId++, entry, el, x: 121, y: BELT_Y, phase: "infeed", image, result: null, revealed: 0, dist: 0,
+              upload: true, name, analyse, onDone };
+  boxes.push(b); place(b);
+  log(`box <b>#${b.id + 1}</b> <span class="info">${name} placed on the infeed</span>`);
+}
+
+/** Take the recorded boxes off the line (Live mode shows only the user's photos). */
+export function clearRecorded() {
+  for (const b of boxes) {
+    if (b.upload || b.phase === "done") continue;
+    b.cancelled = true; b.phase = "done"; b.removing = true; b.el.remove();
+    if (state.station === b) state.station = null;
+    if (state.lastDone === b) state.lastDone = null;
+  }
+  boxes = boxes.filter((b) => b.el.isConnected);
+  clamp(false); tower("t-g");
 }
 
 /** Point at distance d along a polyline, and whether its end was reached. @param {number[][]} path @param {number} d @returns {[number, number, boolean]} */
@@ -136,7 +143,7 @@ export function startLine(onArrive) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (state.running) {
       state.runMs += dt * 1000;
-      const v = BELT_SPEED * state.speed * dt, mainMoving = !state.station && !state.hold;
+      const v = BELT_SPEED * state.speed * dt, mainMoving = !state.station;
       if (mainMoving) beltOffset += v;
       laneOffset += v;
       $("belt-main").style.backgroundPosition = `${beltOffset}px 0`;
@@ -151,7 +158,6 @@ export function startLine(onArrive) {
         b.x += v;
         if (b.x >= DIVERT_X) divert(b);
       }
-      placeUpload();
       for (const b of boxes) {
         if (b.phase === "good") {
           b.x += v;

@@ -83,3 +83,28 @@ test("row, column and range totals", () => {
   assert.ok(res.findings.some((f) => f.startsWith("R2: column 1 holds <b>4</b>")));
   assert.equal(res.status[set.items[2].id], "pass");           // 16 is within 14-16
 });
+
+// ---- rules JSON (what the Inspection Planner will generate; executed by the line) ----
+import { rulesToJson, parseRulesJson } from "../public/js/rules.js";
+
+test("rules JSON round-trips: serialise, parse, same rules and sensitivity", () => {
+  const set = createRuleSet(["each_exact", "box_exact", "walls"]); set.items[2].on = false;
+  const json = rulesToJson(set.items, 0.45);
+  const doc = JSON.parse(json);
+  assert.equal(doc.rules[0].checker, "gemma4.count");
+  assert.equal(doc.rules[2].on, false);
+  const back = parseRulesJson(json);
+  assert.equal(back.threshold, 0.45);
+  assert.deepEqual(back.rules.items.map((r) => [r.type, r.on, r.p]), set.items.map((r) => [r.type, r.on, r.p]));
+});
+
+test("rules JSON validation gives readable errors", () => {
+  const bad = (/** @type {object} */ doc) => { try { parseRulesJson(JSON.stringify(doc)); return ""; } catch (e) { return String(e instanceof Error ? e.message : e); } };
+  assert.match(bad({ rules: [{ type: "nope" }] }), /unknown type "nope"/);
+  assert.match(bad({ rules: [{ type: "each_exact", params: { x: 1 } }] }), /has no parameter "x"/);
+  assert.match(bad({ rules: [{ type: "each_exact", params: { n: 1.5 } }] }), /whole number/);
+  assert.match(bad({ rules: [{ type: "walls", checker: "gemma4.count" }] }), /answered by "geometry.wall-line"/);
+  assert.match(bad({ rules: [{ type: "color_all", params: { col: "teal" } }] }), /colour must be one of/);
+  assert.match(bad({ sensitivity: 2, rules: [{ type: "walls" }] }), /sensitivity/);
+  assert.match(parseRulesJson.toString().length ? (() => { try { parseRulesJson("{"); return ""; } catch (e) { return String(e); } })() : "", /not valid JSON/);
+});

@@ -8,32 +8,48 @@ import { variantText } from "./data.js";
 import { clearShot, drawShot, drawMatrix, setVerdict, setVerdictMessage, setStep, resetSteps, showImage } from "./panel.js";
 import { clamp, tower, flash, packet } from "./scene.js";
 import { log, updateKpis } from "./log.js";
-import { getThreshold } from "./spec-editor.js";
 import { recordCheck } from "./history.js";
+import { approved, onApprovedChanged, wallMinOf } from "./spec.js";
 /** @typedef {import("../../types/model").Box} Box */
 /** @typedef {import("../../types/model").RuleSet} RuleSet */
 /** @typedef {import("../../types/model").Evaluation} Evaluation */
 /** @typedef {import("../../types/model").Entry} Entry */
 
-/** @type {RuleSet | null} */ let ruleSet = null;
-/** @param {RuleSet} rules */
-export function initStation(rules) { ruleSet = rules; }
+/** The line always applies the approved specification. @param {Box} b @returns {Evaluation} */
+const applyRules = (b) => evaluate(b.entry, b.colors, approved.rules.items, approved.threshold, wallMinOf(approved.program));
 
-/** @param {Box} b @returns {Evaluation} */
-const applyRules = (b) => evaluate(b.entry, b.colors, ruleSet ? ruleSet.items : [], getThreshold());
+const CANCELLED = new Error("box removed from the line");
 
 /**
- * One inspection step: marks it running, does its work, then marks it done with its duration.
- * @param {string} key @param {() => Promise<void>} work
+ * Inspection steps for one box: each marks itself running, does its work, then marks itself done with its duration.
+ * If the box is taken off the line (switching to Live), its remaining steps are skipped.
+ * @param {Box} b
  */
-const step = (key, work) => async () => {
+const stepper = (b) => /** @param {string} key @param {() => Promise<void>} work */ (key, work) => async () => {
+  if (b.cancelled) throw CANCELLED;
   await whileRunning(); setStep(key, "run");
   const t = performance.now(); await work();
+  if (b.cancelled) throw CANCELLED;
   setStep(key, "done", Math.round((performance.now() - t) * state.speed));
 };
 
+/** The panel when Live mode is waiting for a photo. */
+export function showWaiting() {
+  resetSteps(); drawMatrix(null, 0); clearShot("waiting for a photo…");
+  $("cur-id").textContent = "waiting for a photo"; $("shot-variant").textContent = "–"; $("shot-truth").textContent = "–";
+  setVerdictMessage("WAITING FOR A PHOTO", "Drag a photo onto the drop zone at the infeed, or upload one. It is inspected when it reaches the camera.");
+  $("line-status").textContent = "RUNNING";
+}
+
 /** Inspect the box clamped at the camera, then release it towards the diverter. @param {Box} b */
 export async function inspect(b) {
+  try { await inspectRecorded(b); }
+  catch (e) { if (e !== CANCELLED) throw e; }       // taken off the line: Live mode has already reset the panel
+}
+
+/** @param {Box} b */
+async function inspectRecorded(b) {
+  const step = stepper(b);
   state.station = b; b.phase = "station";
   $("line-status").textContent = "CLAMPED · INSPECTING";
   $("cur-id").textContent = `${b.entry.img_id} · box #${b.id + 1}`;
@@ -60,12 +76,15 @@ export async function inspect(b) {
 async function revealCompartments(b) {
   const res = b.result || (b.result = applyRules(b));
   for (b.revealed = 1; b.revealed <= res.cells.length; b.revealed++) {
-    await whileRunning(); drawShot(b, 2); drawMatrix(res, b.revealed); await wait(55);
+    await whileRunning();
+    if (b.cancelled) throw CANCELLED;
+    drawShot(b, 2); drawMatrix(res, b.revealed); await wait(55);
   }
 }
 
 /** Wall check, apply the rules, signal the diverter, count and log, release the box. @param {Box} b */
 async function finish(b) {
+  const step = stepper(b);
   await step("walls", async () => { await wait(280); drawShot(b, 3); })();
   await step("rules", async () => {
     await wait(200); b.result = applyRules(b); drawShot(b, 3); drawMatrix(b.result, 99); setVerdict(b.result, true);
@@ -87,29 +106,25 @@ async function finish(b) {
   log(`box <b>#${b.id + 1}</b>${b.upload ? ` <span class="info">[your photo, live ${b.liveSeconds}s]</span>` : ""} → ` +
       `<span class="${result.failed ? "bad" : "ok"}">${result.failed ? "FAIL" : "PASS"}</span>${first} · signal sent to diverter`);
 
-  if (b.upload && ruleSet) recordCheck(b, ruleSet.items);       // shows up on the Check page
+  if (b.upload) recordCheck(b, approved.rules.items, approved.version);   // shows up on the Check page
   clamp(false); await wait(450);
-  b.phase = "toDiverter"; state.station = null; state.hold = false;
+  b.phase = "toDiverter"; state.station = null;
   $("line-status").textContent = "RUNNING"; tower("t-g");
 }
 
-/** An uploaded photo has been placed at the camera: show it and ask for Inspect. @param {Box} b */
-export function promptUploaded(b) {
-  $("cur-id").textContent = `your photo · box #${b.id + 1}`;
-  resetSteps(); drawMatrix(null, 0);
-  if (b.image) showImage(b.image);
-  $("shot-variant").textContent = "your uploaded photo"; $("shot-truth").textContent = "no ground truth";
-  tower("t-a");
-  setVerdictMessage("YOUR PHOTO IS AT CAM 01", "Press <b>Inspect</b> to check it now with Gemma 4 on the GPU, against the written specification.");
-}
-
 /**
- * Inspect an uploaded photo live, then let the recorded line continue.
- * @param {Box} b the uploaded box, already at the camera
+ * Inspect an uploaded photo live, automatically when it reaches the camera.
+ * @param {Box} b the uploaded box, just arrived at the camera
  * @param {(progress: (seconds: number) => void) => Promise<Entry>} analyse runs the analysis on the GPU
  */
 export async function inspectUpload(b, analyse) {
+  const step = stepper(b);
+  state.station = b; b.phase = "station";
   $("line-status").textContent = "INSPECTING YOUR PHOTO";
+  $("cur-id").textContent = `${b.name || "your photo"} · box #${b.id + 1}`;
+  resetSteps(); drawMatrix(null, 0); setVerdict(null, false); clearShot();
+  $("shot-variant").textContent = "your photo"; $("shot-truth").textContent = "no ground truth";
+  tower("t-a");
   log(`box <b>#${b.id + 1}</b> clamped at Cam 01 · <span class="info">sent to Gemma 4 on the GPU</span>`);
   await step("clamp", async () => { clamp(true); await wait(550); })();
   await step("capture", async () => {
@@ -132,14 +147,15 @@ export async function inspectUpload(b, analyse) {
     log(`<span class="bad">box #${b.id + 1}: live inspection failed (${msg}); the photo was removed</span>`);
     clamp(false); await wait(450);
     b.phase = "done"; b.el.classList.add("gone");
-    state.station = null; state.hold = false; tower("t-g"); $("line-status").textContent = "RUNNING";
+    state.station = null; tower("t-g"); $("line-status").textContent = "RUNNING";
     return;
   }
   await step("checks", async () => { await revealCompartments(b); })();
   await finish(b);
 }
 
-/** Rule edits re-apply to the last fully analysed box; a box still being analysed picks them up at its rules step. */
+/** A newly approved spec re-applies to the last fully analysed box; a box still being analysed picks it up at its rules step. */
+onApprovedChanged(() => reapplyRules());
 export function reapplyRules() {
   const b = state.station && state.station !== state.lastDone ? null : state.lastDone;
   if (!b) return;

@@ -27,5 +27,5 @@ export function setMode(mode, note) {
   for (const [id, on] of [["mode-replay", mode === "replay"], ["mode-live", mode === "live"], ["mode-check", mode === "check"]]) {
     const b = $(/** @type {string} */ (id)); b.classList.toggle("on", /** @type {boolean} */ (on)); b.setAttribute("aria-checked", String(on));
   }
-  $("mode-note").innerHTML = note;
+  $("mode-note").innerHTML = note; $("mode-note").dataset.line = note;
 }

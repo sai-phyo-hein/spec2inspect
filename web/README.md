@@ -4,8 +4,8 @@ The line page and its live-inspection API, served by one Cloud Run service.
 
 ```
 web/
-├── app_web.py          FastAPI: /api/live/* (inspect a photo on the GPU), /api/samples (tray photos), /replay, /
-├── spec_core.py        Shared Python logic: grid finding, wall/colour measurement, model calls, rendering
+├── app_web.py          FastAPI: /api/live/*, /api/samples, /api/checks, /api/spec, /api/regions, /replay, /
+├── spec_core.py        Shared Python logic: region programs (interpreter), grid detection, wall measurement, model calls
 ├── public/             The line page — static files, also what Firebase Hosting serves
 │   ├── index.html      Markup only
 │   ├── css/line.css    Styles
@@ -13,22 +13,26 @@ web/
 │       ├── main.js         entry point: wires the modules together
 │       ├── config.js       constants (grid size, wall threshold, scene geometry, cost guard)
 │       ├── state.js        shared line state, timing helpers
-│       ├── rules.js        rule types and evaluation (pure, unit-tested)
+│       ├── rules.js        rule types, rules JSON (serialise + validate) and evaluation (pure, unit-tested)
 │       ├── colours.js      pin colour per compartment from pixels
 │       ├── data.js         recorded results and box images
 │       ├── scene.js        conveyor drawing, clamping arms, diverter, box movement
 │       ├── station.js      inspection sequence at the camera
 │       ├── panel.js        AI pipeline panel (image overlay, steps, grid, verdict)
-│       ├── spec-editor.js  written-specification card (add / remove / edit rules)
 │       ├── mode.js         Replay / Live / Check switch
 │       ├── upload.js       Live: place a photo at the camera (tray or upload), inspect it on the GPU
 │       ├── tray.js         Live: photo tray in the left panel (samples + your uploads), drag onto the line
 │       ├── history.js      results of photos inspected live (memory + localStorage, CSV export)
 │       ├── check.js        Check page: cards with verdict, counts, findings and the rules that applied
+│       ├── admin.js        Admin rule builder: inputs, detected region plan + rules JSON, verification, approval
+│       ├── accuracy.js     accuracy of a rule set on the labelled recordings (pure, unit-tested)
+│       ├── spec.js         the approved specification the line runs (load, approve)
+│       ├── spec-view.js    the line's read-only specification card
+│       ├── view.js         settings menu (gear, top right): Production line or Admin
 │       └── log.js          line log, KPIs, mode badge
 ├── types/model.d.ts    shared data shapes (Entry, Rule, Evaluation, Box, ...) for type checking
 ├── tsconfig.json       type checking only: checkJs + strict, no build output
-├── tests/rules.test.mjs    unit tests for the rule engine (npm test)
+├── tests/              unit tests: rule engine, rules JSON, accuracy (npm test); region programs (python -m unittest discover tests)
 └── replay/             recorded results (downloaded by ../prepare_replay.sh; not committed)
 ```
 

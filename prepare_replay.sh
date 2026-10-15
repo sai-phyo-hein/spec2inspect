@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gets the replay recorded on Kaggle (record_replay_kaggle.ipynb) into web/replay, then syncs it to Cloud Storage.
+# Gets the replay recorded on Kaggle (notebooks/spec2inspect-record-replay.ipynb) into web/replay, then syncs it to Cloud Storage.
 # Downloads only if web/replay is missing (FORCE=1 to refresh); the sync uploads only new or changed files.
 # Usage:  HF_TOKEN=hf_xxx ./prepare_replay.sh
 set -euo pipefail

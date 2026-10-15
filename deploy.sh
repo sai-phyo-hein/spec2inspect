@@ -9,13 +9,20 @@ REPO="${REPO:-spec-to-inspection}"
 AR="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 WEB_SA="spec-web@${PROJECT}.iam.gserviceaccount.com"
 DEPLOY_GPU="${DEPLOY_GPU:-1}"          # set DEPLOY_GPU=0 for a replay-only page (no live uploads, no GPU cost)
+# ADMIN_TOKEN=... ./deploy.sh  makes approving a specification (and running the planner) require that token
+PLANNER_MODELS="${PLANNER_MODELS:-gemini-3.5-pro}"   # Gemini model(s) offered on the Admin page; check with ./check_planner_model.sh
 REBUILD_GPU="${REBUILD_GPU:-0}"        # the GPU image (model inside) is built once; REBUILD_GPU=1 to rebuild it
 REPLAY_BUCKET="${PROJECT}-replay"      # filled by ./prepare_replay.sh, mounted read-only into spec-web
 STAGING="gs://${PROJECT}-build-staging"
 
 gcloud storage objects describe "gs://${REPLAY_BUCKET}/index.json" >/dev/null 2>&1 || \
   { echo "replay not in gs://${REPLAY_BUCKET}: run ./prepare_replay.sh first"; exit 1; }
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com iam.googleapis.com compute.googleapis.com
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com iam.googleapis.com compute.googleapis.com \
+  firestore.googleapis.com firebase.googleapis.com firebasehosting.googleapis.com aiplatform.googleapis.com
+
+# Firestore (native mode) holds the inspection log; created once, in the same region.
+gcloud firestore databases describe --database="(default)" >/dev/null 2>&1 || \
+  gcloud firestore databases create --database="(default)" --location="$REGION" --type=firestore-native
 
 # Builds run as the Compute Engine default service account on newer projects: give it what a build needs.
 PNUM=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
@@ -37,6 +44,10 @@ gcloud iam service-accounts describe "$WEB_SA" >/dev/null 2>&1 || \
   gcloud iam service-accounts create spec-web --display-name "Spec-to-Inspection web page"
 gcloud storage buckets add-iam-policy-binding "gs://${REPLAY_BUCKET}" \
   --member "serviceAccount:${WEB_SA}" --role roles/storage.objectViewer -q >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:${WEB_SA}" \
+  --role roles/datastore.user --condition=None -q >/dev/null          # read and write the inspection log
+gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:${WEB_SA}" \
+  --role roles/aiplatform.user --condition=None -q >/dev/null         # call Gemini (the Inspection Planner)
 
 ENV_VARS="INFER_AUTH=none"
 if [ "$DEPLOY_GPU" = "1" ]; then
@@ -62,6 +73,8 @@ gcloud run deploy spec-web --image "$AR/spec-web:latest" --region "$REGION" \
   --add-volume "name=replay,type=cloud-storage,bucket=${REPLAY_BUCKET},readonly=true" \
   --add-volume-mount "volume=replay,mount-path=/app/replay" \
   --min-instances 0 --max-instances 1 --timeout 3600 --session-affinity \
-  --set-env-vars "$ENV_VARS" --port 8080 --allow-unauthenticated
+  --set-env-vars "^@^${ENV_VARS//,/@}@CHECKS_STORE=firestore@GOOGLE_CLOUD_PROJECT=${PROJECT}@PLANNER_LOCATION=global@PLANNER_MODELS=${PLANNER_MODELS}${ADMIN_TOKEN:+@ADMIN_TOKEN=${ADMIN_TOKEN}}" \
+  --port 8080 --allow-unauthenticated
 
-echo "Web page: $(gcloud run services describe spec-web --region "$REGION" --format 'value(status.url)')"
+echo "Web page (Cloud Run): $(gcloud run services describe spec-web --region "$REGION" --format 'value(status.url)')"
+echo "Next: ./deploy_hosting.sh  (Firebase Hosting at https://${PROJECT}.web.app)"

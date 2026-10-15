@@ -62,6 +62,32 @@ def find_grid(path, rows=ROWS, cols=COLS, sat_max=0.25, val_min=90):
     ys, sy = _lines(wall.mean(1), rows)
     return xs, ys, min(sx, sy)
 
+def _count_cells(profile, max_cells=8, min_strength=0.6, max_cv=0.05):
+    """How many compartments along one axis: the largest count whose dividers are strong and evenly spaced."""
+    best = None
+    for n in range(2, max_cells + 1):
+        try:
+            lines, strength = _lines(profile, n)
+        except Exception:
+            continue
+        w = np.diff(lines)
+        if strength >= min_strength and w.std() / w.mean() <= max_cv:
+            best = n
+    return best
+
+def detect_grid(im, max_cells=8, sat_max=0.25, val_min=90):
+    """Find the container's layout from its own wall lines, without being told the size.
+    Returns rows, cols, xs, ys, strength; raises ValueError if the container isn't a regular grid."""
+    a = np.asarray(normalize_for_geometry(im)).astype(np.float32)
+    mx, mn = a.max(-1), a.min(-1)
+    wall = (mx > val_min) & ((mx - mn) / (mx + 1e-6) < sat_max)
+    cols, rows = _count_cells(wall.mean(0), max_cells), _count_cells(wall.mean(1), max_cells)
+    if not rows or not cols:
+        raise ValueError("no regular grid of compartments found")
+    xs, sx = _lines(wall.mean(0), cols)
+    ys, sy = _lines(wall.mean(1), rows)
+    return rows, cols, xs, ys, min(sx, sy)
+
 def cell_boxes(xs, ys, inset=6):
     return [(r, c, (xs[c] + inset, ys[r] + inset, xs[c + 1] - inset, ys[r + 1] - inset))
             for r in range(len(ys) - 1) for c in range(len(xs) - 1)]
@@ -158,20 +184,76 @@ def chat_body(crop, text, model="gemma"):
             "chat_template_kwargs": {"enable_thinking": False}}
 
 # ---------------- analyse (needs a model) and render (CPU only) ----------------
-def analyze(im, ask, cell_text=CELL_TEXT, rows=ROWS, cols=COLS, max_workers=4):
-    """Run all checks once and return raw results. `ask(crop, text, answers) -> dist or None`."""
+# ---------------- region programs ----------------
+# How a container is divided is not hard-coded: it is a small *region program* (JSON), a list of steps from a fixed
+# set of operations, interpreted here. The planner (built-in today, Gemini next) outputs this program; the line runs
+# whatever program was approved. A fixed operation set (instead of arbitrary generated code) keeps it safe to run,
+# testable, and the same on Kaggle, Cloud Run and in the browser preview.
+REGION_PROGRAM_V1 = "region-plan/v1"
+DEFAULT_PROGRAM = {"program": REGION_PROGRAM_V1, "steps": [
+    {"op": "normalize_light"},
+    {"op": "grid_from_walls", "rows": "auto", "cols": "auto", "inset": 6},
+    {"op": "wall_segments", "missing_below": WALL_DENSITY_MIN},
+]}
+
+def program_for(rows, cols):
+    """A grid program with a fixed size (used when callers still pass rows/cols)."""
+    return {"program": REGION_PROGRAM_V1, "steps": [
+        {"op": "normalize_light"},
+        {"op": "grid_from_walls", "rows": int(rows), "cols": int(cols), "inset": 6},
+        {"op": "wall_segments", "missing_below": WALL_DENSITY_MIN},
+    ]}
+
+def run_region_program(im, program):
+    """Execute a region program on a photo. Returns the regions (cells with r, c, box), the wall segments with their
+    measured strength, the resolved layout, and the missing-wall threshold the program sets."""
+    if program.get("program") != REGION_PROGRAM_V1:
+        raise ValueError(f"unsupported region program {program.get('program')!r}")
+    im = im.convert("RGB"); geo = im
+    rows = cols = 0; xs, ys = [], []; strength = 1.0; cells = []; walls = []; missing_below = WALL_DENSITY_MIN
+    for step in program["steps"]:
+        op = step["op"]
+        if op == "normalize_light":                      # auto-gain for the geometric steps only
+            geo = normalize_for_geometry(im)
+        elif op == "grid_from_walls":                    # compartments from the container's own wall lines
+            r, c = step.get("rows", "auto"), step.get("cols", "auto")
+            if r == "auto" or c == "auto":
+                dr, dc = detect_grid(im, max_cells=int(step.get("max_cells", 8)))[:2]
+                r, c = (dr if r == "auto" else int(r)), (dc if c == "auto" else int(c))
+            rows, cols = int(r), int(c)
+            xs, ys, strength = find_grid_image(geo, rows, cols)
+            xs, ys = [int(x) for x in xs], [int(y) for y in ys]
+            cells = [dict(r=rr, c=cc, box=[int(v) for v in b]) for rr, cc, b in cell_boxes(xs, ys, inset=int(step.get("inset", 6)))]
+        elif op == "fixed_regions":                      # explicit regions, as fractions of the photo (non-grid trays)
+            W, H = im.size
+            cells = [dict(r=int(g.get("row", 0)), c=int(g.get("col", i)), id=g.get("id"),
+                          box=[int(g["box"][0] * W), int(g["box"][1] * H), int(g["box"][2] * W), int(g["box"][3] * H)])
+                     for i, g in enumerate(step["regions"])]
+            rows = 1 + max(x["r"] for x in cells); cols = 1 + max(x["c"] for x in cells); xs, ys = [], []
+        elif op == "wall_segments":                      # every internal wall between neighbouring grid cells
+            missing_below = float(step.get("missing_below", WALL_DENSITY_MIN))
+            if xs and ys:
+                segs = [("v", r_, c_) for r_ in range(rows) for c_ in range(cols - 1)] + \
+                       [("h", r_, c_) for r_ in range(rows - 1) for c_ in range(cols)]
+                walls = [dict(o=o, r=r_, c=c_, strength=wall_strength(geo, xs, ys, o, r_, c_)) for o, r_, c_ in segs]
+        else:
+            raise ValueError(f"unknown region operation {op!r}")
+    if not cells:
+        raise ValueError("the region program produced no regions")
+    return dict(rows=rows, cols=cols, xs=xs, ys=ys, grid_strength=float(strength), cells=cells, walls=walls,
+                missing_below=missing_below)
+
+def analyze(im, ask, cell_text=CELL_TEXT, rows=ROWS, cols=COLS, max_workers=4, program=None):
+    """Divide the photo with a region program, then ask the model about every region.
+    `ask(crop, text, answers) -> dist or None`. Without a program, a fixed rows x cols grid is used."""
     from concurrent.futures import ThreadPoolExecutor
-    im = im.convert("RGB"); rows, cols = int(rows), int(cols)
-    geo = normalize_for_geometry(im)
-    xs, ys, strength = find_grid_image(geo, rows, cols)
-    cells = cell_boxes(xs, ys)
+    im = im.convert("RGB")
+    res = run_region_program(im, program or program_for(rows, cols))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        dists = list(ex.map(lambda b: ask(im.crop(b), cell_text, DIGITS), [b for _, _, b in cells]))
-    walls = [("v", r, c) for r in range(rows) for c in range(cols - 1)] + \
-            [("h", r, c) for r in range(rows - 1) for c in range(cols)]
-    return dict(rows=rows, cols=cols, xs=[int(x) for x in xs], ys=[int(y) for y in ys], grid_strength=float(strength),
-                cells=[dict(r=r, c=c, box=[int(v) for v in b], dist=d) for (r, c, b), d in zip(cells, dists)],
-                walls=[dict(o=o, r=r, c=c, strength=wall_strength(geo, xs, ys, o, r, c)) for o, r, c in walls])
+        dists = list(ex.map(lambda c: ask(im.crop(tuple(c["box"])), cell_text, DIGITS), res["cells"]))
+    for c, d in zip(res["cells"], dists):
+        c["dist"] = d
+    return res
 
 def _font(size=34):
     try:

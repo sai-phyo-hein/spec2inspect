@@ -6,17 +6,18 @@ import { state } from "./state.js";
 import { setMode, log } from "./log.js";
 import { showTray } from "./tray.js";
 import { showCheck } from "./check.js";
+import { clearRecorded } from "./scene.js";
+import { showWaiting } from "./station.js";
 
 export const SAMPLE_IMAGES_URL = "https://huggingface.co/datasets/saiphyohein/spec2inspect-images";
 const sampleLink = `<a href="${SAMPLE_IMAGES_URL}" target="_blank" rel="noopener">Get sample images ↗</a>`;
 
 let recordedDate = "";
-/** @type {() => void} */ let onLeaveLive = () => {};
 
 const notes = {
   replay: () => `<b>Replaying</b> Gemma 4 E4B answers recorded on Kaggle (${recordedDate}); rules re-applied live. ${sampleLink}`,
-  live: () => `<b>LIVE:</b> drag a photo onto the line or upload one, then press <b>Inspect</b>. ${sampleLink}`,
-  check: () => `<b>CHECK:</b> results of the photos inspected live on this device, with the rules that applied. ${sampleLink}`,
+  live: () => `<b>LIVE:</b> drag a photo onto the drop zone at the infeed, or upload one: it is inspected when it reaches the camera. ${sampleLink}`,
+  check: () => `<b>CHECK:</b> every photo inspected live, from the shared inspection log, with the rules that applied. ${sampleLink}`,
 };
 let wasRunning = true;                                // the line pauses while the Check page is open
 
@@ -24,30 +25,30 @@ let wasRunning = true;                                // the line pauses while t
 function switchTo(mode) {
   if (mode === state.mode) return;
   const from = state.mode;
-  if (from === "live") onLeaveLive();
   if (from === "check") state.running = wasRunning;
   if (mode === "check") { wasRunning = state.running; state.running = false; }
   state.live = mode === "live";
   showCheck(mode === "check");
   $("replay-ctl").hidden = mode !== "replay";
-  $("live-ctl").hidden = mode !== "live";
-  if (mode === "live") {                         // the recorded line keeps running underneath
+  $("live-status").hidden = mode !== "live";
+  $("drop-zone").hidden = mode !== "live";
+  if (mode === "live") {                         // only the user's photos: take the recorded boxes off the line
+    clearRecorded(); showWaiting();
     state.running = true; $button("btn-run").textContent = "Pause";
-    fetch("api/live/warm", { method: "POST" }).catch(() => {});   // start the GPU now, quietly, so Inspect is fast
+    fetch("api/live/warm", { method: "POST" }).catch(() => {});   // start the GPU now, quietly, so the first photo is fast
   }
   if (mode === "replay") $button("btn-run").textContent = state.running ? "Pause" : "Run";
   setMode(mode, notes[mode]());
   showTray(mode === "live");
   if (mode !== "check")
-    log(`<span class="info">${mode === "live" ? "live mode: upload a photo to inspect it on the GPU" : "replay mode: recorded inspections"}</span>`);
+    log(`<span class="info">${mode === "live" ? "live mode: drop a photo at the infeed to inspect it on the GPU" : "replay mode: recorded inspections"}</span>`);
 }
 
 /**
  * @param {string} recorded date the replay was recorded
- * @param {() => void} leaveLive called when leaving Live (cancels a photo waiting to be inspected)
  */
-export async function initModeSwitch(recorded, leaveLive) {
-  recordedDate = recorded; onLeaveLive = leaveLive;
+export async function initModeSwitch(recorded) {
+  recordedDate = recorded;
   setMode("replay", notes.replay());
   $("mode-replay").addEventListener("click", () => switchTo("replay"));
   $("mode-live").addEventListener("click", () => switchTo("live"));

@@ -1,20 +1,17 @@
 // @ts-check
-// Live mode: place a photo at the camera (from the tray or a new upload) and inspect it with Gemma 4 on the GPU
-// when the user presses Inspect.
+// Live mode: drop (or upload) a photo at the start of the conveyor. It travels to the camera and is inspected
+// automatically with Gemma 4 on the GPU. The drop zone is disabled until that inspection is finished.
 import { $, $button, $input } from "./dom.js";
-import { state } from "./state.js";
 import { log } from "./log.js";
-import { requestUploadPlacement, cancelUploadPlacement } from "./scene.js";
-import { promptUploaded, inspectUpload } from "./station.js";
+import { spawnUpload } from "./scene.js";
 import { initTray, addToTray } from "./tray.js";
-/** @typedef {import("../../types/model").Box} Box */
+import { approved } from "./spec.js";
 /** @typedef {import("../../types/model").BoxImage} BoxImage */
 /** @typedef {import("../../types/model").Entry} Entry */
 /** @typedef {import("../../types/model").TrayItem} TrayItem */
 
 const MAX_W = 1700;                               // same scale as the recorded images
-/** @type {"idle" | "placing" | "placed" | "inspecting"} */ let phase = "idle";
-/** @type {Box | null} */ let placed = null;
+let busy = false;                                 // a photo is on its way to, or at, the camera
 
 /** Load a photo (same-origin or object URL) into a canvas, scaled to at most MAX_W wide. @param {string} url @returns {Promise<BoxImage>} */
 async function readPhoto(url) {
@@ -27,33 +24,14 @@ async function readPhoto(url) {
   return { canvas, variant: ["Uploaded", 0], w: canvas.width, h: canvas.height };
 }
 
-/** Put a tray photo at the camera, if the station is free for a new photo. @param {TrayItem} item */
-async function placePhoto(item) {
-  if (phase !== "idle") { log(`<span class="bad">finish inspecting the current photo first</span>`); return; }
-  phase = "placing"; setButtons();
-  try {
-    const image = await readPhoto(item.url);
-    state.hold = true; $("line-status").textContent = "HOLD · PLACING YOUR PHOTO";
-    log(`<span class="info">${item.name}: holding the line and placing it at Cam 01</span>`);
-    requestUploadPlacement(image, (box) => {
-      box.name = item.name;
-      placed = box; phase = "placed"; setButtons();
-      $("line-status").textContent = "HOLD · PRESS INSPECT";
-      promptUploaded(box);
-    });
-  } catch (e) {
-    phase = "idle"; setButtons();
-    log(`<span class="bad">could not open ${item.name}: ${e instanceof Error ? e.message : e}</span>`);
-  }
-}
-
 /**
  * Inspect a photo on the GPU: create a job, then poll until it finishes.
  * @param {BoxImage} image @param {(seconds: number) => void} onProgress @returns {Promise<Entry>}
  */
 async function analyseOnGpu(image, onProgress) {
   const r = await fetch("api/live/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({ image: image.canvas.toDataURL("image/jpeg", 0.92) }) });
+                                          body: JSON.stringify({ image: image.canvas.toDataURL("image/jpeg", 0.92),
+                                                                 program: approved.program }) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
   const { id } = await r.json();
   const t0 = Date.now();
@@ -67,9 +45,25 @@ async function analyseOnGpu(image, onProgress) {
   throw new Error("timed out waiting for the GPU");
 }
 
-function setButtons() {
-  $button("btn-upload").disabled = phase !== "idle";
-  $button("btn-inspect").disabled = phase !== "placed";
+/** @param {boolean} on */
+function setBusy(on) {
+  busy = on;
+  $("drop-zone").classList.toggle("busy", on);
+  $button("btn-upload").disabled = on;
+  $("dz-text").textContent = on ? "Inspecting… wait for the result" : "Drop a photo here";
+}
+
+/** Put a photo on the infeed, unless the previous one is still being inspected. @param {TrayItem} item */
+async function placePhoto(item) {
+  if (busy) { log(`<span class="bad">wait until the current photo has been inspected</span>`); return; }
+  setBusy(true);
+  try {
+    const image = await readPhoto(item.url);
+    spawnUpload(image, item.name, (progress) => analyseOnGpu(image, progress), () => setBusy(false));
+  } catch (e) {
+    setBusy(false);
+    log(`<span class="bad">could not open ${item.name}: ${e instanceof Error ? e.message : e}</span>`);
+  }
 }
 
 export async function initUpload() {
@@ -83,22 +77,5 @@ export async function initUpload() {
     addToTray(item);
     placePhoto(item);
   });
-  $("btn-inspect").addEventListener("click", async () => {
-    const box = placed; if (!box || !box.image) return;
-    placed = null; phase = "inspecting"; setButtons();
-    const image = box.image;
-    await inspectUpload(box, (progress) => analyseOnGpu(image, progress));
-    phase = "idle"; setButtons();
-  });
   await initTray(placePhoto);
-}
-
-/** Leaving Live mode: drop a photo that is waiting to be placed or inspected. An inspection in progress finishes. */
-export function cancelUpload() {
-  if (phase === "placing") cancelUploadPlacement();
-  if (phase === "placed" && placed) {
-    placed.phase = "done"; placed.el.classList.add("gone"); placed = null; state.station = null;
-  }
-  if (phase === "placing" || phase === "placed") { state.hold = false; phase = "idle"; $("line-status").textContent = "RUNNING"; }
-  setButtons();
 }
