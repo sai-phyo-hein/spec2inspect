@@ -562,17 +562,10 @@ class PlanIn(BaseModel):
 def plan_models():
     return {"models": PLANNER_MODELS}
 
-@app.post("/api/plan")
-def plan(body: PlanIn, x_admin_token: str = Header(default="")):
-    if ADMIN_TOKEN and x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(403, "admin token required to run the planner")
-    if body.model not in PLANNER_MODELS:
-        raise HTTPException(400, f"model must be one of {PLANNER_MODELS}")
-    now = time.time()
-    _plan_times[:] = [t for t in _plan_times if now - t < 60]
-    if len(_plan_times) >= PLANS_PER_MIN:
-        raise HTTPException(429, "the planner is busy; try again in a minute")
-    _plan_times.append(now)
+PLAN_JOBS: dict = {}
+
+def plan_sync(body: PlanIn) -> dict:
+    """Run the planner (one or two Gemini calls). Raises HTTPException with a readable message on failure."""
     im = decode_image(body.image)
     im.thumbnail((1600, 1600))
     buf = io.BytesIO(); im.save(buf, format="JPEG", quality=90)
@@ -598,6 +591,55 @@ def plan(body: PlanIn, x_admin_token: str = Header(default="")):
         raise HTTPException(422, f"{body.model} returned a plan that failed validation: {'; '.join(problems)}")
     out.update(model=body.model, seconds=round(time.time() - t0, 1), attempts=attempts, warnings=problems,
                sentences=[{"id": f"S{i}", "text": t} for i, t in enumerate(sentences, 1)])
+    return out
+
+def plan_guard(body: PlanIn, x_admin_token: str):
+    if ADMIN_TOKEN and x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "admin token required to run the planner")
+    if body.model not in PLANNER_MODELS:
+        raise HTTPException(400, f"model must be one of {PLANNER_MODELS}")
+    now = time.time()
+    _plan_times[:] = [t for t in _plan_times if now - t < 60]
+    if len(_plan_times) >= PLANS_PER_MIN:
+        raise HTTPException(429, "the planner is busy; try again in a minute")
+    _plan_times.append(now)
+
+def plan(body: PlanIn, x_admin_token: str = ""):
+    """Synchronous planning (used by tests)."""
+    plan_guard(body, x_admin_token)
+    return plan_sync(body)
+
+@app.post("/api/plan")
+def plan_start(body: PlanIn, x_admin_token: str = Header(default="")):
+    """Start planning and return at once; the page polls GET /api/plan/{id}. Planning can take longer than the
+    one-minute limit Firebase Hosting puts on a request (Gemini, plus a retry if a sentence was missed)."""
+    plan_guard(body, x_admin_token)
+    decode_image(body.image)                      # reject a bad image now, not inside the job
+    now = time.time()
+    for k in [k for k, j in PLAN_JOBS.items() if now - j["created"] > JOB_TTL_S]:
+        PLAN_JOBS.pop(k, None)
+    job_id = uuid.uuid4().hex[:12]
+    PLAN_JOBS[job_id] = {"state": "running", "created": now}
+    def work():
+        job = PLAN_JOBS[job_id]
+        try:
+            job.update(state="done", result=plan_sync(body))
+        except HTTPException as ex:
+            job.update(state="error", status=ex.status_code, error=ex.detail)
+        except Exception as ex:
+            job.update(state="error", status=500, error=f"{type(ex).__name__}: {ex}")
+        print(f"plan {job_id}: {job['state']} in {time.time() - job['created']:.1f}s {job.get('error', '')}", flush=True)
+    threading.Thread(target=work, daemon=True).start()
+    return {"id": job_id}
+
+@app.get("/api/plan/{job_id}")
+def plan_status(job_id: str):
+    job = PLAN_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown or expired planning job")
+    out = {"state": job["state"], "elapsed": round(time.time() - job["created"], 1)}
+    if job["state"] == "done": out["result"] = job["result"]
+    if job["state"] == "error": out.update(error=job["error"], status=job["status"])
     return out
 
 class RegionsIn(BaseModel):

@@ -246,8 +246,20 @@ async function processInputs() {
   try {
     const it = samples[parseInt($select("ad-sample").value, 10)];
     const canvas = it.entry ? (await boxImage(it.entry)).canvas : await photoCanvas(it.url);
-    const plan = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), model: $select("ad-model").value,
-                                               image: canvas.toDataURL("image/jpeg", 0.9) });
+    const model = $select("ad-model").value;
+    const { id } = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), model, image: canvas.toDataURL("image/jpeg", 0.9) });
+    /** @type {any} */ let plan = null;
+    const t0 = Date.now();
+    while (!plan) {                                      // planning runs as a job; poll until it finishes
+      await new Promise((res) => setTimeout(res, 1000));
+      const r = await fetch(`api/plan/${id}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      if (j.state === "done") plan = j.result;
+      else if (j.state === "error") throw new Error(j.error);
+      else notes.textContent = `Asking ${model} to plan the inspection… ${Math.round(j.elapsed ?? (Date.now() - t0) / 1000)} s`;
+      if (Date.now() - t0 > 5 * 60000) throw new Error("the planner took longer than 5 minutes");
+    }
     $input("ad-prog").value = JSON.stringify(plan.program, null, 2); readProgram();
     $input("ad-json").value = ruleSetToJson(plan.ruleset); readJson();
     plannedBy = { model: plan.model, seconds: plan.seconds };
