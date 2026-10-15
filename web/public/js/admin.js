@@ -42,13 +42,14 @@ function renderPlan() {
 
 function renderRules() {
   const rs = draft.ruleset;
-  if (!rs) { $("ad-rule-list").innerHTML = ""; return; }
+  if (!rs) { $("ad-rule-list").innerHTML = ""; $("ad-rule-meta").innerHTML = ""; return; }
   const ops = Object.entries(rs.params).filter(([, p]) => p.operator).map(([k, p]) => `${p.label || k} (default ${p.default})`);
   $("ad-rule-list").innerHTML = rs.rules.map((r) =>
     `<li class="${r.on === false ? "off" : ""}"><b class="mono">${esc(r.id)}</b> ${esc(ruleText(r))}<span class="tag">${esc(checkerOf(r))}</span>` +
-    `<div class="mono muted expr">${r.for !== undefined ? `for ${esc(r.for)}: ` : ""}${esc(r.test)}</div></li>`).join("") +
-    (rs.questions.length ? `<li class="meta">Questions to Gemma in every region: ${rs.questions.map((q) => `<b>q.${esc(q.id)}</b> "${esc(q.text)}" (${q.answer})`).join("; ")}</li>` : "") +
-    (ops.length ? `<li class="meta"><span class="tag op-tag">operator can change</span> ${esc(ops.join(", "))}</li>` : "");
+    `<div class="mono muted expr">${r.for !== undefined ? `for ${esc(r.for)}: ` : ""}${esc(r.test)}</div></li>`).join("");
+  $("ad-rule-meta").innerHTML =
+    (ops.length ? `<p><span class="tag op-tag">operator settings</span> ${esc(ops.join(", "))}</p>` : "") +
+    (rs.questions.length ? `<p><span class="tag">questions to Gemma</span> ${rs.questions.map((q) => `<b>q.${esc(q.id)}</b> "${esc(q.text)}" (${q.answer})`).join("; ")}</p>` : "");
 }
 
 /** Draw the sample photo with numbered regions, walls and, when Gemma's answers are known, the draft verdict. */

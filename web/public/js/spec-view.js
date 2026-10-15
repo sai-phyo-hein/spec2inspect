@@ -15,7 +15,7 @@ function render() {
   const ops = Object.entries(rs.params).filter(([, p]) => p.operator).map(([name, p]) => {
     const v = values[name], label = esc(p.label || name);
     const control = p.kind === "colour"
-      ? `<select class="inl op" data-name="${esc(name)}">${COLOURS.map((c) => `<option${c === v ? " selected" : ""}>${c}</option>`).join("")}</select>`
+      ? `<select class="inl op" data-name="${esc(name)}">${["any", ...COLOURS].map((c) => `<option value="${c}"${c === v ? " selected" : ""}>${c === "any" ? "any (not checked)" : c}</option>`).join("")}</select>`
       : `<input class="op" type="number" min="0" max="99" value="${v}" data-name="${esc(name)}" aria-label="${label}">`;
     return `<label class="op-setting">${label} ${control}</label>`;
   });

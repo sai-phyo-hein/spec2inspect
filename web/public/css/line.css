@@ -419,3 +419,6 @@ button.link { background: none; border: 0; padding: 0; color: var(--info); font-
 .coverage td.how { white-space: nowrap; }
 .coverage .gap td { color: var(--accent); }
 .coverage .warn { margin: 6px 0 0; color: var(--accent); font-size: .8rem; }
+.rule-sentences { list-style: none; padding-left: 0; }
+.rule-sentences li { margin-bottom: 4px; }
+.rule-meta p { margin: 2px 0; font-size: .82rem; }

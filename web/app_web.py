@@ -390,7 +390,7 @@ PLAN_SCHEMA = {
         "params": {"type": "array", "description": "named values the rules use as param.<name>", "items": {
             "type": "object", "properties": {
                 "name": {"type": "string"}, "kind": {"type": "string", "enum": ["count", "colour"]},
-                "default": {"type": "string", "description": "a whole number for count, a colour name for colour"},
+                "default": {"type": "string", "description": "a whole number for count; a colour name, or any, for colour"},
                 "operator": {"type": "boolean", "description": "true if the operator may change it on the line"},
                 "label": {"type": "string"}},
             "required": ["name", "kind", "default", "operator"]}},
@@ -399,7 +399,7 @@ PLAN_SCHEMA = {
                 "id": {"type": "string"}, "text": {"type": "string"}, "answer": {"type": "string", "enum": ["yesno", "count"]}},
             "required": ["id", "text", "answer"]}},
         "rules": {"type": "array", "items": {"type": "object", "properties": {
-            "id": {"type": "string"}, "text": {"type": "string", "description": "the sentence of the specification this rule checks"},
+            "id": {"type": "string"}, "text": {"type": "string", "description": "what the rule checks, in plain words"},
             "for": {"type": "string", "description": "per-region rules only: all, row N, col N, cell R C or region NAME"},
             "test": {"type": "string", "description": "the expression"}},
             "required": ["id", "text", "test"]}},
@@ -441,7 +441,11 @@ hold mock items, or hold real products). Plan the inspection as two programs tha
    - params: named values used as param.<name>. If the specification lets the operator choose or change a value on the
      line, make it a param with operator true (e.g. "the operator chooses the colour to check" -> a colour param with
      operator true and a rule for all: colour == param.colour; "the operator can change the number per compartment" ->
-     a count param with operator true used in count == param.n). Give each param a short label.
+     a count param with operator true used in count == param.n). Give each param a short label. An operator colour
+     param defaults to "any" (matches every colour, so the check is not enforced until the operator picks a colour)
+     unless the specification names a colour; never invent a required colour.
+   - Each rule's text says, in plain words, what the rule checks ("Every pushpin has the colour the operator
+     selects"), not the sentence it came from; the coverage list already links sentences to rules.
    - questions: only when a sentence needs something other than counting pushpins or colour (e.g. "Is the lid closed?",
      "How many tangerines are in this region?"). Ask a short, visual question with answer yesno or count. At most 4.
    Names: rule ids R1, R2, ...; parameter names and question ids short snake_case (e.g. n, colour, lid_closed).

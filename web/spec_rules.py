@@ -134,7 +134,7 @@ def validate_ruleset(d):
         if not ID.match(name) or not isinstance(p, dict): raise ValueError(f"bad parameter {name!r}")
         kind = p.get("kind") or ("colour" if isinstance(p.get("default"), str) else "count")
         if kind == "colour":
-            if p.get("default") not in COLOURS: raise ValueError(f"parameter {name!r}: unknown colour")
+            if p.get("default") != "any" and p.get("default") not in COLOURS: raise ValueError(f"parameter {name!r}: unknown colour")
         elif kind == "count":
             if not isinstance(p.get("default"), int) or not 0 <= p["default"] <= 99: raise ValueError(f"parameter {name!r}: default must be 0-99")
         else: raise ValueError(f"parameter {name!r}: kind must be count or colour")

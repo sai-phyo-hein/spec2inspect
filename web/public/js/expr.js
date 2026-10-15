@@ -11,6 +11,7 @@
 //   walls.missing is the number of missing walls.
 // Selectors: "all", "row 2", "col 3", "cell 2 3" (rows and columns count from 1), "region left" (a named region).
 // Operators: == != < <= > >=  + -  and or not  ( ). Values: numbers, "strings", true, false, param.<name>.
+// The colour value "any" matches every colour, so a colour rule whose operator setting is "any" is not enforced.
 
 /** @typedef {{ t: "num", v: number } | { t: "str", v: string } | { t: "bool", v: boolean } | { t: "id", v: string }
  *   | { t: "call", fn: string, args: Node[] } | { t: "not", a: Node } | { t: "bin", op: string, a: Node, b: Node }} Node */
@@ -157,6 +158,7 @@ function ev(n, get, call) {
       }
       const a = ev(n.a, get, call), b = ev(n.b, get, call);
       if (a === null || b === null) return null;                     // unknown measurement: can't judge
+      if ((n.op === "==" || n.op === "!=") && (a === "any" || b === "any")) return n.op === "==";   // "any colour": not enforced
       switch (n.op) {
         case "+": return Number(a) + Number(b);
         case "-": return Number(a) - Number(b);

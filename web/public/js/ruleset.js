@@ -32,7 +32,7 @@ export function parseRuleSet(input) {
     if (!ID.test(name)) throw new Error(`parameter name "${name}" must be a short identifier`);
     const pp = /** @type {any} */ (p);
     const kind = pp?.kind ?? (typeof pp?.default === "string" ? "colour" : "count");
-    if (kind === "colour") { if (!COLOURS.includes(pp.default)) throw new Error(`parameter "${name}": colour must be one of ${COLOURS.join(", ")}`); }
+    if (kind === "colour") { if (pp.default !== "any" && !COLOURS.includes(pp.default)) throw new Error(`parameter "${name}": colour must be "any" or one of ${COLOURS.join(", ")}`); }
     else if (kind === "count") { if (!Number.isInteger(pp.default) || pp.default < 0 || pp.default > 99) throw new Error(`parameter "${name}": default must be a whole number from 0 to 99`); }
     else throw new Error(`parameter "${name}": kind must be "count" or "colour"`);
     params[name] = { default: pp.default, kind, ...(pp.operator ? { operator: true } : {}), ...(pp.label ? { label: String(pp.label).slice(0, 60) } : {}) };
@@ -149,6 +149,7 @@ export function evaluateRuleSet(entry, colors, rs, threshold, wallMin = WALL_MIN
     if (rule.for !== undefined) {
       const sel = parseSelector(rule.for);
       let judged = 0, fail = false;
+      /** @type {string[]} */ const ruleFindings = [];
       cells.forEach((c, k) => {
         if (!selects(sel, c)) return;
         const colour = colors ? (colors[k] ?? null) : null;
@@ -160,9 +161,12 @@ export function evaluateRuleSet(entry, colors, rs, threshold, wallMin = WALL_MIN
         if (viol > threshold) {
           c.flagged = true; c.viol = Math.max(c.viol || 0, viol); fail = true;
           const seen = idents(tree).has("colour") && colour ? `has a <b>${colour}</b> pin` : c.dist ? `looks like <b>${c.count}</b> pin(s)` : "fails";
-          findings.push(`${rule.id}: ${where(c)} ${seen}, rule ${label} (P = ${viol.toFixed(2)})`);
+          ruleFindings.push(`${where(c)} ${seen} (P = ${viol.toFixed(2)})`);
         }
       });
+      if (ruleFindings.length > 3)                                   // one line per rule when many regions fail it
+        findings.push(`${rule.id}: ${label} fails in <b>${ruleFindings.length}</b> regions: ${ruleFindings.slice(0, 2).join("; ")}; +${ruleFindings.length - 2} more`);
+      else ruleFindings.forEach((f) => findings.push(`${rule.id}: ${f}, rule ${label}`));
       status[rule.id] = !judged ? "n/a" : fail ? "fail" : "pass";
     } else {
       const { ok, used } = evalBox(tree, {

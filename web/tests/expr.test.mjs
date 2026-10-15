@@ -79,6 +79,19 @@ test("rule-set validation messages", () => {
   assert.match(bad({ rules: [] }), /1-20 "rules"/);
   assert.match(bad({ rules: [{ id: "R1", for: "row 9x", test: "count == 1" }] }), /unknown selector/);
   assert.match(bad({ rules: [{ id: "R1", test: "count == 1" }] }), /rule R1: "count" is a per-region measurement/);
-  assert.match(bad({ params: { c: { default: "teal", kind: "colour" } }, rules: [{ test: "walls.missing == 0" }] }), /colour must be one of/);
+  assert.match(bad({ params: { c: { default: "teal", kind: "colour" } }, rules: [{ test: "walls.missing == 0" }] }), /colour must be "any" or one of/);
   assert.match(bad({ questions: [{ id: "x", text: "short", answer: "maybe" }], rules: [{ test: "walls.missing == 0" }] }), /yesno/);
+});
+
+test('"any" colour is not enforced, and repeated region failures become one finding', () => {
+  const rs = parseRuleSet({ params: { detecting_color: { default: "yellow", kind: "colour", operator: true } },
+                            rules: [{ id: "R4", for: "all", test: "colour == param.detecting_color", text: "Every pushpin has the selected colour" }] });
+  const blue = Array(15).fill("blue"), b = box(ones);
+  const strict = evaluateRuleSet(b, blue, rs, 0.5, 0.3);
+  assert.equal(strict.status.R4, "fail");
+  assert.equal(strict.findings.length, 1);                                    // not 15 lines
+  assert.match(strict.findings[0], /fails in <b>15<\/b> regions/);
+  assert.equal(evaluateRuleSet(b, blue, rs, 0.5, 0.3, { detecting_color: "any" }).status.R4, "pass");
+  assert.equal(parseRuleSet({ params: { c: { default: "any", kind: "colour", operator: true } },
+                              rules: [{ for: "all", test: "colour == param.c" }] }).params.c.default, "any");
 });
