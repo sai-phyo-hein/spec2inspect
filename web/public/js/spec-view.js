@@ -4,11 +4,14 @@
 import { $ } from "./dom.js";
 import { COLOURS } from "./rules.js";
 import { ruleText, checkerOf, paramValues } from "./ruleset.js";
-import { approved, onApprovedChanged, setOperatorValue } from "./spec.js";
+import { approved, onApprovedChanged, setOperatorValue, REPLAY_RULESET } from "./spec.js";
+import { state } from "./state.js";
 
 const esc = (/** @type {string} */ s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] || c);
 
+/** Replay shows the fixed replay rules; Live shows the approved specification with the operator's controls. */
 function render() {
+  if (state.mode !== "live") return renderReplay();
   const rs = approved.ruleset, values = paramValues(rs, approved.operator);
   const rows = rs.rules.filter((r) => r.on !== false).map((r) =>
     `<li class="rule ro"><span class="txt"><b class="mono">${esc(r.id)}</b>${esc(ruleText(r))} <span class="tag">${esc(checkerOf(r))}</span></span></li>`);
@@ -32,5 +35,18 @@ function render() {
   const a = approved.accuracy;
   $("line-acc").textContent = a ? `accuracy ${(a.accuracy * 100).toFixed(1)}%${a.auroc != null ? ` · AUROC ${(a.auroc * 100).toFixed(1)}` : ""}` : "accuracy not measured";
 }
+
+function renderReplay() {
+  const rs = REPLAY_RULESET;
+  $("line-rules").innerHTML = rs.rules.map((r) =>
+    `<li class="rule ro"><span class="txt"><b class="mono">${esc(r.id)}</b>${esc(ruleText(r))} <span class="tag">${esc(checkerOf(r))}</span></span></li>`).join("");
+  $("spec-badge").textContent = "replay · fixed rules";
+  $("line-thr").textContent = rs.sensitivity.toFixed(2);
+  $("line-plan").textContent = "3 × 5 regions · the rules the recording is evaluated against";
+  $("line-acc").textContent = "not affected by Admin approvals (they apply in Live)";
+}
+
+/** Re-render for the current mode (called when switching Replay / Live / Check). */
+export const refreshSpecView = () => render();
 
 export function initSpecView() { onApprovedChanged(render); render(); }

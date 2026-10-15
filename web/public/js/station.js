@@ -9,15 +9,19 @@ import { clearShot, drawShot, drawMatrix, setVerdict, setVerdictMessage, setStep
 import { clamp, tower, flash, packet } from "./scene.js";
 import { log, updateKpis } from "./log.js";
 import { recordCheck } from "./history.js";
-import { approved, onApprovedChanged, wallMinOf } from "./spec.js";
+import { approved, onApprovedChanged, wallMinOf, REPLAY_RULESET, REPLAY_WALL_MIN } from "./spec.js";
 /** @typedef {import("../../types/model").Box} Box */
 /** @typedef {import("../../types/model").RuleSet} RuleSet */
 /** @typedef {import("../../types/model").Evaluation} Evaluation */
 /** @typedef {import("../../types/model").Entry} Entry */
 
-/** The line always applies the approved specification. @param {Box} b @returns {Evaluation} */
-const applyRules = (b) => evaluateRuleSet(b.entry, b.colors, approved.ruleset, approved.ruleset.sensitivity,
-                                         wallMinOf(approved.program), approved.operator);
+/**
+ * Recorded boxes (Replay) are always judged by the fixed replay rules; photos inspected live use the approved
+ * specification, with the operator's settings. @param {Box} b @returns {Evaluation}
+ */
+const applyRules = (b) => b.upload
+  ? evaluateRuleSet(b.entry, b.colors, approved.ruleset, approved.ruleset.sensitivity, wallMinOf(approved.program), approved.operator)
+  : evaluateRuleSet(b.entry, b.colors, REPLAY_RULESET, REPLAY_RULESET.sensitivity, REPLAY_WALL_MIN);
 
 const CANCELLED = new Error("box removed from the line");
 

@@ -23,6 +23,10 @@ export const DEFAULT_PROGRAM = { program: "region-plan/v1", steps: [
 /** The default rule set: one pin per compartment, 15 in total, every wall present. */
 export const DEFAULT_RULESET = () => typedToRuleSet(createRuleSet().items, 0.5);
 
+/** Replay always uses these fixed rules (the ones the recording is evaluated against), whatever Admin approves. */
+export const REPLAY_RULESET = DEFAULT_RULESET();
+export const REPLAY_WALL_MIN = WALL_MIN;
+
 /** The missing-wall threshold a program sets. @param {RegionProgram} p */
 export const wallMinOf = (p) => {
   const st = p.steps.find((s) => s.op === "wall_segments");

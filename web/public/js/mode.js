@@ -8,6 +8,7 @@ import { showTray } from "./tray.js";
 import { showCheck } from "./check.js";
 import { clearRecorded } from "./scene.js";
 import { showWaiting } from "./station.js";
+import { refreshSpecView } from "./spec-view.js";
 
 export const SAMPLE_IMAGES_URL = "https://huggingface.co/datasets/saiphyohein/spec2inspect-images";
 const sampleLink = `<a href="${SAMPLE_IMAGES_URL}" target="_blank" rel="noopener">Get sample images ↗</a>`;
@@ -39,6 +40,7 @@ function switchTo(mode) {
   }
   if (mode === "replay") $button("btn-run").textContent = state.running ? "Pause" : "Run";
   setMode(mode, notes[mode]());
+  refreshSpecView();                               // Replay: fixed rules; Live: the approved specification
   showTray(mode === "live");
   if (mode !== "check")
     log(`<span class="info">${mode === "live" ? "live mode: drop a photo at the infeed to inspect it on the GPU" : "replay mode: recorded inspections"}</span>`);

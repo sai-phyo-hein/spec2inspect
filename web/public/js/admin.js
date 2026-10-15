@@ -120,7 +120,7 @@ function isDirty() {
 
 function updateStatus() {
   const dirty = isDirty();
-  $("ad-status").textContent = (approved.version ? `The line runs approved v${approved.version}. ` : "The line runs the default specification. ") +
+  $("ad-status").textContent = (approved.version ? `Live inspections run approved v${approved.version} (Replay keeps its fixed rules). ` : "Live inspections run the default specification. ") +
                                (!valid() ? "The draft JSON has errors." : dirty ? "The draft has unapproved changes." : "The draft matches it.");
   $button("ad-approve").disabled = !valid() || (!dirty && approved.version > 0);
   $button("ad-discard").disabled = !dirty;

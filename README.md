@@ -13,7 +13,9 @@ The GPU runs only when a photo is inspected in Live mode. Everything else is CPU
 
 The line page (`/` on `spec-web`, source layout in `web/README.md`):
 - **Replay** (default): boxes slide in, four arms clamp at the camera, the AI pipeline panel shows each step, and the
-  diverter sends boxes to GOOD or REJECT, using answers recorded on Kaggle; the written rules are re-applied live.
+  diverter sends boxes to GOOD or REJECT, using answers recorded on Kaggle, judged by **fixed replay rules** (one pin
+  per compartment, 15 in total, every wall present): the rules the recording is evaluated against. Admin approvals
+  don't change Replay; they apply to Live.
 - **Live** (switch at top right): the recorded boxes leave the line and only your photos run. The left panel becomes a
   photo tray (sample photos from the public dataset `saiphyohein/spec2inspect-images`, served same-origin by
   `/api/samples`; recorded boxes if it is unavailable). Drag a photo onto the **drop zone at the start of the conveyor**,
@@ -41,8 +43,8 @@ The line page (`/` on `spec-web`, source layout in `web/README.md`):
   3. **Verification:** the sample divided into numbered regions with its walls, and an **accuracy report** on the 240
      labelled recordings (a checkbox, disabled for mock photos, which have no ground truth).
   4. **Approval:** approved versions are stored in Firestore (`specs`, `GET/POST /api/spec`, with the written
-     specification and the accuracy report), and the production line, live inspections and the Check page always use the
-     latest one. "Discard draft" returns to it. Set `ADMIN_TOKEN` when deploying to require a token for approval.
+     specification and the accuracy report), and live inspections and the Check page always use the latest one
+     (Replay keeps its fixed rules). "Discard draft" returns to it. Set `ADMIN_TOKEN` when deploying to require a token for approval.
 - **Check**: every photo inspected live, from the shared **inspection log in Firestore** (`POST/GET /api/checks` on
   `spec-web`; browsers never access Firestore directly), grouped by day, as cards with the photo and its overlay, the
   verdict, the pins counted per compartment, the findings and the rules that applied; filter by passed or rejected,
