@@ -14,7 +14,7 @@
 Uploaded-photo inspection runs as a short job the page polls, so no single request has to wait for the GPU to
 start (Firebase Hosting gives requests to Cloud Run about a minute).
 """
-import base64, binascii, io, json, os, threading, time, uuid
+import base64, binascii, io, json, os, re, threading, time, uuid
 from urllib.parse import urlparse
 
 import requests
@@ -403,10 +403,18 @@ PLAN_SCHEMA = {
             "for": {"type": "string", "description": "per-region rules only: all, row N, col N, cell R C or region NAME"},
             "test": {"type": "string", "description": "the expression"}},
             "required": ["id", "text", "test"]}},
+        "coverage": {"type": "array", "description": "one entry per numbered sentence S1, S2, ... of the specification", "items": {
+            "type": "object", "properties": {
+                "sentence": {"type": "string", "description": "the sentence id, e.g. S3"},
+                "how": {"type": "string", "enum": ["rule", "operator_setting", "layout", "not_expressible"]},
+                "rules": {"type": "array", "items": {"type": "string"}, "description": "ids of the rules that check it"},
+                "params": {"type": "array", "items": {"type": "string"}, "description": "names of the params it introduces"},
+                "reason": {"type": "string", "description": "for not_expressible: why"}},
+            "required": ["sentence", "how"]}},
         "sensitivity": {"type": "number", "description": "flag a region when P(violation) exceeds this; 0.5 unless the spec says otherwise"},
         "notes": {"type": "string", "description": "one or two sentences: how the spec was mapped, and any sentence that could not be expressed"},
     },
-    "required": ["region_program", "params", "questions", "rules", "sensitivity", "notes"],
+    "required": ["region_program", "params", "questions", "rules", "coverage", "sensitivity", "notes"],
 }
 
 PLANNER_INSTRUCTIONS = """You are the Inspection Planner for an automated visual inspection station.
@@ -436,6 +444,13 @@ hold mock items, or hold real products). Plan the inspection as two programs tha
      a count param with operator true used in count == param.n). Give each param a short label.
    - questions: only when a sentence needs something other than counting pushpins or colour (e.g. "Is the lid closed?",
      "How many tangerines are in this region?"). Ask a short, visual question with answer yesno or count. At most 4.
+   Names: rule ids R1, R2, ...; parameter names and question ids short snake_case (e.g. n, colour, lid_closed).
+
+3. coverage: the specification is given as numbered sentences S1, S2, ... Return exactly one coverage entry for every
+   sentence: "rule" (list the rule ids that check it), "operator_setting" (a sentence that lets the operator choose or
+   change a value: list the operator params it introduces; every such param must be used by at least one rule, so add
+   the rule that uses it if the other sentences don't already), "layout" (it describes the container, handled by the
+   region program), or "not_expressible" (give the reason). Never skip a sentence.
    Express every checkable sentence, and nothing the specification does not say. If a sentence cannot be expressed,
    leave it out and say so in notes. Return only the JSON."""
 
@@ -458,18 +473,71 @@ def normalize_plan(raw: dict) -> dict:
         elif op == "normalize_light":
             steps.append({"op": op})
     program = RegionProgram(steps=steps).as_dict()          # raises on anything invalid
+    # Names the model chose for parameters and questions become short identifiers (references in the expressions are
+    # rewritten to match); rules are simply numbered R1, R2, ... (nothing refers to rule ids).
+    used, rename = set(), {}
+    def short(name, prefix):
+        base = re.sub(r"[^a-z0-9_]", "_", str(name).strip().lower()).strip("_") or prefix
+        base = (prefix + "_" + base if not base[0].isalpha() else base)[:20]
+        cand, k = base, 2
+        while cand in used: cand, k = f"{base[:18]}{k}", k + 1
+        used.add(cand); return cand
     params = {}
     for p in raw.get("params") or []:
+        new = short(p.get("name"), "p"); rename[("param", str(p.get("name")))] = new
         kind = p.get("kind", "count"); default = str(p.get("default", "")).strip().lower()
-        params[str(p.get("name"))] = {"kind": kind, "default": int(default) if kind == "count" and default.isdigit() else default,
-                                      "operator": bool(p.get("operator")), **({"label": p["label"]} if p.get("label") else {})}
-    rules = [{k: r[k] for k in ("id", "text", "for", "test") if r.get(k) not in (None, "")} for r in raw.get("rules") or []]
+        params[new] = {"kind": kind, "default": int(default) if kind == "count" and default.isdigit() else default,
+                       "operator": bool(p.get("operator")), **({"label": str(p["label"])[:60]} if p.get("label") else {})}
+    questions = []
+    for q in raw.get("questions") or []:
+        new = short(q.get("id"), "q"); rename[("q", str(q.get("id")))] = new
+        questions.append({**q, "id": new})
+    def rewrite(test):
+        for (kind, old), new in sorted(rename.items(), key=lambda kv: -len(kv[0][1])):
+            test = re.sub(rf"\b{kind}\.{re.escape(old)}\b", f"{kind}.{new}", test)
+        return test
+    rules, rule_ids = [], {}
+    for i, r in enumerate(raw.get("rules") or []):
+        rule = {k: r[k] for k in ("text", "for", "test") if r.get(k) not in (None, "")}
+        rule["id"] = f"R{i + 1}"; rule_ids[str(r.get("id"))] = rule["id"]
+        if "test" in rule: rule["test"] = rewrite(str(rule["test"]))
+        rules.append(rule)
     ruleset = validate_ruleset({"sensitivity": min(0.95, max(0.05, float(raw.get("sensitivity", 0.5)))),
-                                "params": params, "questions": raw.get("questions") or [], "rules": rules})
-    return {"program": program, "ruleset": ruleset, "notes": str(raw.get("notes", ""))[:600]}
+                                "params": params, "questions": questions, "rules": rules})
+    coverage = [{"sentence": str(c.get("sentence", "")), "how": c.get("how", ""),
+                 "rules": [rule_ids.get(str(x), str(x)) for x in c.get("rules") or []],
+                 "params": [rename.get(("param", str(x)), str(x)) for x in c.get("params") or []],
+                 **({"reason": str(c["reason"])[:200]} if c.get("reason") else {})} for c in raw.get("coverage") or []]
+    return {"program": program, "ruleset": ruleset, "coverage": coverage, "notes": str(raw.get("notes", ""))[:600]}
+
+def plan_issues(out: dict, n_sentences: int) -> list:
+    """What's missing from a valid plan: sentences without coverage, operator settings no rule uses, unknown rule ids."""
+    issues, rs = [], out["ruleset"]
+    covered = {c["sentence"].upper() for c in out["coverage"]}
+    missing = [f"S{i}" for i in range(1, n_sentences + 1) if f"S{i}" not in covered]
+    if missing: issues.append(f"no coverage entry for {', '.join(missing)}")
+    used = " ".join(r["test"] for r in rs["rules"])
+    for name, p in rs["params"].items():
+        if p.get("operator") and f"param.{name}" not in used:
+            issues.append(f"operator setting param.{name} is not used by any rule")
+    ids = {r["id"] for r in rs["rules"]}
+    for c in out["coverage"]:
+        if c["how"] == "rule" and (not c["rules"] or any(x not in ids for x in c["rules"])):
+            issues.append(f"{c['sentence']} is marked as a rule but names no existing rule")
+        if c["how"] == "operator_setting" and not any(rs["params"].get(x, {}).get("operator") for x in c["params"]):
+            issues.append(f"{c['sentence']} is an operator setting but introduces no operator parameter")
+    return issues
 
 _plan_times: list = []
 _genai = {"client": None}
+
+def numbered_sentences(spec_text: str) -> list:
+    """The specification as sentences S1, S2, ... (one per line, or per sentence within a line)."""
+    out = []
+    for line in spec_text.splitlines():
+        for part in re.split(r"(?<=[.!?])\s+", line.strip()):
+            if part.strip(): out.append(part.strip())
+    return out
 
 def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
     """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards)."""
@@ -480,7 +548,7 @@ def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
                                         http_options=types.HttpOptions(timeout=120_000))
     resp = _genai["client"].models.generate_content(
         model=model,
-        contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), f"Written specification:\n{spec_text}"],
+        contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), spec_text],
         config=types.GenerateContentConfig(system_instruction=PLANNER_INSTRUCTIONS, temperature=0,
                                            response_mime_type="application/json", response_json_schema=PLAN_SCHEMA))
     return json.loads(resp.text)
@@ -508,18 +576,28 @@ def plan(body: PlanIn, x_admin_token: str = Header(default="")):
     im = decode_image(body.image)
     im.thumbnail((1600, 1600))
     buf = io.BytesIO(); im.save(buf, format="JPEG", quality=90)
-    t0 = time.time()
-    try:
-        raw = call_gemini(body.model, buf.getvalue(), body.spec_text)
-    except Exception as ex:
-        raise HTTPException(502, f"{body.model} could not be reached: {type(ex).__name__}: {str(ex)[:300]}")
-    try:
-        out = normalize_plan(raw)
-    except HTTPException as ex:
-        raise HTTPException(422, f"{body.model} returned a plan that failed validation: {ex.detail}")
-    except Exception as ex:
-        raise HTTPException(422, f"{body.model} returned a plan that failed validation: {ex}")
-    out.update(model=body.model, seconds=round(time.time() - t0, 1))
+    sentences = numbered_sentences(body.spec_text)
+    prompt = "Written specification, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
+    t0, out, problems, attempts = time.time(), None, [], 0
+    for attempt in range(2):                     # one retry, telling the model exactly what was wrong
+        attempts += 1
+        ask = prompt if attempt == 0 else prompt + "\n\nYour previous plan had these problems; return a corrected plan:\n- " + "\n- ".join(problems)
+        try:
+            raw = call_gemini(body.model, buf.getvalue(), ask)
+        except Exception as ex:
+            raise HTTPException(502, f"{body.model} could not be reached: {type(ex).__name__}: {str(ex)[:300]}")
+        try:
+            cand = normalize_plan(raw)
+        except HTTPException as ex:
+            problems = [f"validation failed: {ex.detail}"]; continue
+        except Exception as ex:
+            problems = [f"validation failed: {ex}"]; continue
+        out, problems = cand, plan_issues(cand, len(sentences))
+        if not problems: break
+    if out is None:
+        raise HTTPException(422, f"{body.model} returned a plan that failed validation: {'; '.join(problems)}")
+    out.update(model=body.model, seconds=round(time.time() - t0, 1), attempts=attempts, warnings=problems,
+               sentences=[{"id": f"S{i}", "text": t} for i, t in enumerate(sentences, 1)])
     return out
 
 class RegionsIn(BaseModel):

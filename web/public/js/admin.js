@@ -219,6 +219,25 @@ async function adminPost(url, body) {
   return data;
 }
 
+/**
+ * Every sentence of the specification and what the planner did with it; gaps and warnings are highlighted.
+ * @param {{ sentences?: { id: string, text: string }[], coverage?: { sentence: string, how: string, rules?: string[], params?: string[], reason?: string }[], warnings?: string[] }} plan
+ */
+function renderCoverage(plan) {
+  const box = $("ad-coverage");
+  if (!plan.sentences?.length) { box.hidden = true; return; }
+  const byId = Object.fromEntries((plan.coverage || []).map((c) => [c.sentence.toUpperCase(), c]));
+  const how = (/** @type {any} */ c) => !c ? "not covered"
+    : c.how === "rule" ? `rule ${c.rules.join(", ")}`
+    : c.how === "operator_setting" ? `operator setting: ${c.params.join(", ")}${c.rules?.length ? ` (${c.rules.join(", ")})` : ""}`
+    : c.how === "layout" ? "region program" : `not expressible${c.reason ? `: ${c.reason}` : ""}`;
+  box.innerHTML = `<table><tr><th>Sentence</th><th>Checked by</th></tr>${plan.sentences.map((t) => {
+    const c = byId[t.id], gap = !c || c.how === "not_expressible";
+    return `<tr class="${gap ? "gap" : ""}"><td><b class="mono">${esc(t.id)}</b> ${esc(t.text)}</td><td class="how">${esc(how(c))}</td></tr>`;
+  }).join("")}</table>` + (plan.warnings?.length ? `<p class="warn">Check before approving: ${esc(plan.warnings.join("; "))}</p>` : "");
+  box.hidden = false;
+}
+
 /** Run the Inspection Planner on the inputs: Gemini returns the region program and rules; then divide the sample. */
 async function processInputs() {
   const btn = $button("ad-process"), notes = $("ad-plan-notes");
@@ -232,7 +251,9 @@ async function processInputs() {
     $input("ad-prog").value = JSON.stringify(plan.program, null, 2); readProgram();
     $input("ad-json").value = ruleSetToJson(plan.ruleset); readJson();
     plannedBy = { model: plan.model, seconds: plan.seconds };
-    notes.textContent = plan.notes ? `Planner notes: ${plan.notes}` : "The planner added no notes.";
+    notes.textContent = (plan.notes ? `Planner notes: ${plan.notes}` : "The planner added no notes.") +
+                        (plan.attempts > 1 ? ` (planned in ${plan.attempts} attempts: the first plan missed something and was sent back)` : "");
+    renderCoverage(plan);
     btn.textContent = "Dividing the sample…";
     await loadSample(parseInt($select("ad-sample").value, 10), true);
     stale = false; refresh();
@@ -242,7 +263,7 @@ async function processInputs() {
 }
 
 function discardDraft() {
-  plannedBy = null; $("ad-plan-notes").hidden = true;
+  plannedBy = null; $("ad-plan-notes").hidden = true; $("ad-coverage").hidden = true;
   $input("ad-spec").value = approved.specText;
   $input("ad-prog").value = JSON.stringify(approved.program, null, 2); readProgram();
   $input("ad-json").value = ruleSetToJson(approved.ruleset); readJson();

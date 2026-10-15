@@ -410,3 +410,12 @@ button.link { background: none; border: 0; padding: 0; color: var(--info); font-
 .op-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .op-setting { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; }
 .op-setting input.op { width: 56px; }
+
+/* planner coverage: every sentence of the specification, and what checks it */
+.coverage[hidden] { display: none; }
+.coverage table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.coverage th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.coverage td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.coverage td.how { white-space: nowrap; }
+.coverage .gap td { color: var(--accent); }
+.coverage .warn { margin: 6px 0 0; color: var(--accent); font-size: .8rem; }
