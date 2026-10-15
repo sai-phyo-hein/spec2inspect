@@ -3,7 +3,7 @@
 // with named parameters (some adjustable by the operator) and custom questions the planner asks Gemma per region.
 // The production line, live inspections, the Admin page and the accuracy report all evaluate rule sets here.
 import { WALL_MIN } from "./config.js";
-import { parse, parseSelector, selects, validate, probability, evalBox, idents } from "./expr.js";
+import { parse, parseSelector, selects, validate, probability, evalBox, idents, ANY } from "./expr.js";
 import { COLOURS, RULE_DEFS } from "./rules.js";
 /** @typedef {import("../../types/model").RuleSetV2} RuleSetV2 */
 /** @typedef {import("../../types/model").ExprRule} ExprRule */
@@ -133,7 +133,10 @@ const where = (/** @type {{ r: number, c: number, id?: string }} */ c) => c.id ?
  */
 export function evaluateRuleSet(entry, colors, rs, threshold, wallMin = WALL_MIN, overrides = {}) {
   const values = paramValues(rs, overrides);
-  const fixedParams = Object.fromEntries(Object.entries(values).map(([k, v]) => [`param.${k}`, v]));
+  // a parameter set to "any" becomes the ANY marker (matches every value); a literal "any" in an expression stays a string
+  const asVal = (/** @type {number | string} */ v) => (v === "any" ? ANY : v);
+  const fixedParams = Object.fromEntries(Object.entries(values).map(([k, v]) => [`param.${k}`, asVal(v)]));
+  const boxParams = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, asVal(v)]));
   const hasModel = entry.cells.some((c) => c.dist);
   /** @type {EvalCell[]} */
   const cells = entry.cells.map((c) => ({ ...c, count: c.dist ? argmax(c.dist) : "–", viol: null, flagged: false }));
@@ -171,7 +174,7 @@ export function evaluateRuleSet(entry, colors, rs, threshold, wallMin = WALL_MIN
     } else {
       const { ok, used } = evalBox(tree, {
         cells: cells.map((c, k) => ({ r: c.r, c: c.c, id: /** @type {any} */ (c).id, dists: dists(c), colour: colors ? (colors[k] ?? null) : undefined })),
-        wallsMissing: missingWalls.length, params: values,
+        wallsMissing: missingWalls.length, params: boxParams,
       });
       if (ok === null) { status[rule.id] = "n/a"; continue; }
       if (ok) { status[rule.id] = "pass"; continue; }

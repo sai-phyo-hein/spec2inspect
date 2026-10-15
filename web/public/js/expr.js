@@ -11,13 +11,18 @@
 //   walls.missing is the number of missing walls.
 // Selectors: "all", "row 2", "col 3", "cell 2 3" (rows and columns count from 1), "region left" (a named region).
 // Operators: == != < <= > >=  + -  and or not  ( ). Values: numbers, "strings", true, false, param.<name>.
-// The colour value "any" matches every colour, so a colour rule whose operator setting is "any" is not enforced.
+// A parameter set to "any" matches every colour (see ANY), so a colour rule whose setting is "any" is not enforced.
 
 /** @typedef {{ t: "num", v: number } | { t: "str", v: string } | { t: "bool", v: boolean } | { t: "id", v: string }
  *   | { t: "call", fn: string, args: Node[] } | { t: "not", a: Node } | { t: "bin", op: string, a: Node, b: Node }} Node */
 /** @typedef {{ kind: "all" } | { kind: "row", r: number } | { kind: "col", c: number } | { kind: "cell", r: number, c: number } | { kind: "region", id: string }} Selector */
 
 export const FUNCTIONS = ["total", "distinct"];
+
+/** A parameter set to "any" (e.g. the operator's colour) is passed in as this marker: it equals every value, so the
+ * rule using it isn't enforced. A literal "any" written in an expression is an ordinary string, so a rule can still
+ * test param.colour == "any" ("if the operator chose a colour ..."). */
+export const ANY = Object.freeze({ any: true });
 const CMP = ["==", "!=", "<", "<=", ">", ">="];
 
 /** @param {string} msg @param {string} src @param {number} pos */
@@ -141,7 +146,7 @@ export function validate(tree, scope, ctx) {
 }
 
 // ---------------- evaluation ----------------
-/** @typedef {number | string | boolean | null} Val */
+/** @typedef {number | string | boolean | null | typeof ANY} Val */
 
 /** @param {Node} n @param {(name: string) => Val} get @param {(n: Node & { t: "call" }) => Val} call @returns {Val} */
 function ev(n, get, call) {
@@ -158,7 +163,7 @@ function ev(n, get, call) {
       }
       const a = ev(n.a, get, call), b = ev(n.b, get, call);
       if (a === null || b === null) return null;                     // unknown measurement: can't judge
-      if ((n.op === "==" || n.op === "!=") && (a === "any" || b === "any")) return n.op === "==";   // "any colour": not enforced
+      if ((n.op === "==" || n.op === "!=") && (a === ANY || b === ANY)) return n.op === "==";   // a setting of "any": matches everything
       switch (n.op) {
         case "+": return Number(a) + Number(b);
         case "-": return Number(a) - Number(b);

@@ -103,3 +103,12 @@ test("colour rules are unknown (not failed) when pin colours weren't measured", 
   const mixed = Array(15).fill("yellow"); mixed[3] = "blue";
   assert.equal(evaluateRuleSet(box(ones), mixed, rs, 0.5, 0.3).status.R1, "pass");
 });
+
+test('only a setting of "any" is a wildcard; a literal "any" in an expression is an ordinary string', () => {
+  const yellow = Array(15).fill("yellow");
+  for (const test of ["colour == param.colour", 'param.colour == "any" or colour == param.colour']) {
+    const rs = parseRuleSet({ params: { colour: { default: "any", kind: "colour", operator: true } }, rules: [{ id: "R4", for: "all", test }] });
+    const st = (/** @type {string} */ v) => evaluateRuleSet(box(ones), yellow, rs, 0.5, 0.3, { colour: v }).status.R4;
+    assert.deepEqual([st("any"), st("green"), st("yellow")], ["pass", "fail", "pass"], test);
+  }
+});
