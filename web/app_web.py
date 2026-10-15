@@ -371,24 +371,34 @@ def approve_spec(body: SpecIn, x_admin_token: str = Header(default="")):
 # ---------------- Inspection Planner (Gemini on Vertex AI) ----------------
 COLOURS = ["yellow", "orange", "red", "pink", "purple", "blue", "cyan", "green"]
 
-PLAN_SCHEMA = {
+# ---- the planner runs as two Gemini calls: regions first, then rules (each streams its thinking to the page) ----
+STEP_SCHEMA = {"type": "object", "properties": {
+    "op": {"type": "string", "enum": ["normalize_light", "grid_from_walls", "fixed_regions", "wall_segments"]},
+    "rows": {"type": "string", "description": "grid_from_walls: 'auto' or a whole number 1-8"},
+    "cols": {"type": "string", "description": "grid_from_walls: 'auto' or a whole number 1-8"},
+    "missing_below": {"type": "number", "description": "wall_segments: wall-line strength below which a wall is missing (default 0.3)"},
+    "regions": {"type": "array", "description": "fixed_regions only", "items": {
+        "type": "object", "properties": {
+            "id": {"type": "string"}, "box": {"type": "array", "items": {"type": "number"},
+                                              "description": "x0, y0, x1, y1 as fractions 0-1 of the photo"},
+            "row": {"type": "integer"}, "col": {"type": "integer"}},
+        "required": ["box"]}}},
+    "required": ["op"]}
+
+REGION_SCHEMA = {
     "type": "object",
     "properties": {
-        "region_program": {"type": "object", "properties": {"steps": {"type": "array", "items": {
-            "type": "object",
-            "properties": {
-                "op": {"type": "string", "enum": ["normalize_light", "grid_from_walls", "fixed_regions", "wall_segments"]},
-                "rows": {"type": "string", "description": "grid_from_walls: 'auto' or a whole number 1-8"},
-                "cols": {"type": "string", "description": "grid_from_walls: 'auto' or a whole number 1-8"},
-                "missing_below": {"type": "number", "description": "wall_segments: wall-line strength below which a wall is missing (default 0.3)"},
-                "regions": {"type": "array", "description": "fixed_regions only", "items": {
-                    "type": "object", "properties": {
-                        "id": {"type": "string"}, "box": {"type": "array", "items": {"type": "number"},
-                                                          "description": "x0, y0, x1, y1 as fractions 0-1 of the photo"},
-                        "row": {"type": "integer"}, "col": {"type": "integer"}},
-                    "required": ["box"]}},
-            },
-            "required": ["op"]}}}, "required": ["steps"]},
+        "region_program": {"type": "object", "properties": {"steps": {"type": "array", "items": STEP_SCHEMA}}, "required": ["steps"]},
+        "layout_sentences": {"type": "array", "items": {"type": "string"},
+                             "description": "ids of the sentences (S1, S2, ...) that describe the container itself"},
+        "notes": {"type": "string", "description": "one sentence: how the container is divided"},
+    },
+    "required": ["region_program", "layout_sentences", "notes"],
+}
+
+RULES_SCHEMA = {
+    "type": "object",
+    "properties": {
         "params": {"type": "array", "description": "named values the rules use as param.<name>", "items": {
             "type": "object", "properties": {
                 "name": {"type": "string"}, "kind": {"type": "string", "enum": ["count", "colour"]},
@@ -405,10 +415,10 @@ PLAN_SCHEMA = {
             "for": {"type": "string", "description": "per-region rules only: all, row N, col N, cell R C or region NAME"},
             "test": {"type": "string", "description": "the expression"}},
             "required": ["id", "text", "test"]}},
-        "coverage": {"type": "array", "description": "one entry per numbered sentence S1, S2, ... of the specification", "items": {
+        "coverage": {"type": "array", "description": "one entry per numbered sentence that is not a layout sentence", "items": {
             "type": "object", "properties": {
                 "sentence": {"type": "string", "description": "the sentence id, e.g. S3"},
-                "how": {"type": "string", "enum": ["rule", "operator_setting", "layout", "not_expressible"]},
+                "how": {"type": "string", "enum": ["rule", "operator_setting", "not_expressible"]},
                 "rules": {"type": "array", "items": {"type": "string"}, "description": "ids of the rules that check it"},
                 "params": {"type": "array", "items": {"type": "string"}, "description": "names of the params it introduces"},
                 "reason": {"type": "string", "description": "for not_expressible: why"}},
@@ -416,52 +426,57 @@ PLAN_SCHEMA = {
         "sensitivity": {"type": "number", "description": "flag a region when P(violation) exceeds this; 0.5 unless the spec says otherwise"},
         "notes": {"type": "string", "description": "one or two sentences: how the spec was mapped, and any sentence that could not be expressed"},
     },
-    "required": ["region_program", "params", "questions", "rules", "coverage", "sensitivity", "notes"],
+    "required": ["params", "questions", "rules", "coverage", "sensitivity", "notes"],
 }
 
-PLANNER_INSTRUCTIONS = """You are the Inspection Planner for an automated visual inspection station.
-An engineer gives you a written specification for a product and one sample photo of its container (it may be empty,
-hold mock items, or hold real products). Plan the inspection as two programs that the station will execute.
+REGION_INSTRUCTIONS = """You are the region planner of an automated visual inspection station.
+An engineer gives you a written specification (numbered sentences S1, S2, ...) and one sample photo of the product's
+container (it may be empty, hold mock items, or hold real products). Decide how each photo is divided into regions,
+as an ordered list of steps from this fixed set:
+- normalize_light: auto-gain for the geometric steps. Use it first.
+- grid_from_walls (rows, cols): compartments found from the container's own wall lines. Use "auto" unless the
+  specification states the layout, in which case give the numbers. Use this whenever the container is a grid.
+- fixed_regions (regions): explicit rectangles as fractions of the photo [x0, y0, x1, y1], only for containers that are
+  not a grid. Give each region a short id.
+- wall_segments (missing_below): measure every internal wall; include it whenever the specification mentions walls
+  or separators. Default missing_below 0.3.
+Also list the sentences that describe the container itself (layout_sentences). Return only the JSON."""
 
-1. region_program: how each photo is divided into regions, an ordered list of steps from this fixed set:
-   - normalize_light: auto-gain for the geometric steps. Use it first.
-   - grid_from_walls (rows, cols): compartments from the container's own wall lines. Use "auto" unless the
-     specification states the layout. Use this whenever the container is a grid of compartments.
-   - fixed_regions (regions): explicit rectangles as fractions of the photo [x0, y0, x1, y1], only for containers that
-     are not a grid. Give each region an id; rules can then select it with "region <id>".
-   - wall_segments (missing_below): measure every internal wall; include it whenever the specification says something
-     about walls or separators. Default missing_below 0.3.
+RULES_INSTRUCTIONS = """You are the rules planner of an automated visual inspection station.
+You get a written specification as numbered sentences S1, S2, ..., one sample photo of the container, and the regions
+the station divides each photo into (already planned). Write one rule per checkable sentence, as an expression.
+- A rule with "for" is checked in every selected region: "all", "row N", "col N", "cell R C" (counting from 1), or
+  "region <id>". Measurements in a region: count (number of pushpins/items, 0-9), colour (the dominant colour of the
+  items: yellow, orange, red, pink, purple, blue, cyan, green), q.<id> (the answer to one of your questions).
+- A rule without "for" is checked once per box. Box values: total(count) or total(count, "row 2") (sum of counts),
+  total(q.<id>) (sum of a count question, or the number of "yes" answers), distinct(colour) (number of colours),
+  walls.missing (number of missing walls).
+- Operators: == != < <= > >= + - and or not, parentheses. Strings in double quotes: colour == "yellow".
+- params: named values used as param.<name>. If the specification lets the operator choose or change a value on the
+  line, make it a param with operator true (e.g. "the operator chooses the colour to check" -> a colour param with
+  operator true and a rule for all: colour == param.colour; "the operator can change the number per compartment" -> a
+  count param with operator true used in count == param.n). Give each param a short label. An operator colour param
+  defaults to "any" (matches every colour, so the check is not enforced until the operator picks one) unless the
+  specification names a colour; never invent a required colour.
+- questions: only when a sentence needs something other than counting items or colour (e.g. "Is the lid closed?").
+  A short, visual question with answer yesno or count. At most 4.
+- Each rule's text says, in plain words, what it checks, not the sentence it came from.
+- Names: rule ids R1, R2, ...; parameter names and question ids short snake_case.
+- coverage: exactly one entry for every sentence that is not a layout sentence: "rule" (the rule ids that check it),
+  "operator_setting" (the operator params it introduces; each must be used by at least one rule, so add that rule if
+  needed), or "not_expressible" (with the reason). Never skip a sentence.
+Express every checkable sentence, and nothing the specification does not say. Return only the JSON."""
 
-2. rules: one rule per checkable sentence of the specification, written as an expression.
-   - A rule with "for" is checked in every selected region: "all", "row N", "col N", "cell R C" (counting from 1), or
-     "region <id>". Measurements in a region: count (number of pushpins/items, 0-9), colour (the dominant colour of the
-     items: yellow, orange, red, pink, purple, blue, cyan, green), q.<id> (the answer to one of your questions).
-   - A rule without "for" is checked once per box. Box values: total(count) or total(count, "row 2") (sum of counts),
-     total(q.<id>) (sum of a count question, or the number of "yes" answers), distinct(colour) (number of colours),
-     walls.missing (number of missing walls).
-   - Operators: == != < <= > >= + - and or not, parentheses. Strings in double quotes: colour == "yellow".
-   - params: named values used as param.<name>. If the specification lets the operator choose or change a value on the
-     line, make it a param with operator true (e.g. "the operator chooses the colour to check" -> a colour param with
-     operator true and a rule for all: colour == param.colour; "the operator can change the number per compartment" ->
-     a count param with operator true used in count == param.n). Give each param a short label. An operator colour
-     param defaults to "any" (matches every colour, so the check is not enforced until the operator picks a colour)
-     unless the specification names a colour; never invent a required colour.
-   - Each rule's text says, in plain words, what the rule checks ("Every pushpin has the colour the operator
-     selects"), not the sentence it came from; the coverage list already links sentences to rules.
-   - questions: only when a sentence needs something other than counting pushpins or colour (e.g. "Is the lid closed?",
-     "How many tangerines are in this region?"). Ask a short, visual question with answer yesno or count. At most 4.
-   Names: rule ids R1, R2, ...; parameter names and question ids short snake_case (e.g. n, colour, lid_closed).
+def numbered_sentences(spec_text: str) -> list:
+    """The specification as sentences S1, S2, ... (one per line, or per sentence within a line)."""
+    out = []
+    for line in spec_text.splitlines():
+        for part in re.split(r"(?<=[.!?])\s+", line.strip()):
+            if part.strip(): out.append(part.strip())
+    return out
 
-3. coverage: the specification is given as numbered sentences S1, S2, ... Return exactly one coverage entry for every
-   sentence: "rule" (list the rule ids that check it), "operator_setting" (a sentence that lets the operator choose or
-   change a value: list the operator params it introduces; every such param must be used by at least one rule, so add
-   the rule that uses it if the other sentences don't already), "layout" (it describes the container, handled by the
-   region program), or "not_expressible" (give the reason). Never skip a sentence.
-   Express every checkable sentence, and nothing the specification does not say. If a sentence cannot be expressed,
-   leave it out and say so in notes. Return only the JSON."""
-
-def normalize_plan(raw: dict) -> dict:
-    """Turn the planner's JSON into a validated region program and rule set; refuse anything out of bounds."""
+def normalize_region(raw: dict) -> dict:
+    """The region planner's answer as a validated region program (refuses anything out of bounds)."""
     steps = []
     for st in (raw.get("region_program") or {}).get("steps") or []:
         op = st.get("op")
@@ -478,9 +493,13 @@ def normalize_plan(raw: dict) -> dict:
             steps.append({"op": op, "missing_below": float(st.get("missing_below", 0.3))})
         elif op == "normalize_light":
             steps.append({"op": op})
-    program = RegionProgram(steps=steps).as_dict()          # raises on anything invalid
-    # Names the model chose for parameters and questions become short identifiers (references in the expressions are
-    # rewritten to match); rules are simply numbered R1, R2, ... (nothing refers to rule ids).
+    return {"program": RegionProgram(steps=steps).as_dict(),
+            "layout_sentences": [str(x).upper() for x in raw.get("layout_sentences") or []],
+            "notes": str(raw.get("notes", ""))[:300]}
+
+def normalize_rules(raw: dict) -> dict:
+    """The rules planner's answer as a validated rule set plus sentence coverage. Rule ids are renumbered R1, R2, ...;
+    parameter and question names are shortened to identifiers, and the expressions rewritten to match."""
     used, rename = set(), {}
     def short(name, prefix):
         base = re.sub(r"[^a-z0-9_]", "_", str(name).strip().lower()).strip("_") or prefix
@@ -510,16 +529,16 @@ def normalize_plan(raw: dict) -> dict:
         rules.append(rule)
     ruleset = validate_ruleset({"sensitivity": min(0.95, max(0.05, float(raw.get("sensitivity", 0.5)))),
                                 "params": params, "questions": questions, "rules": rules})
-    coverage = [{"sentence": str(c.get("sentence", "")), "how": c.get("how", ""),
+    coverage = [{"sentence": str(c.get("sentence", "")).upper(), "how": c.get("how", ""),
                  "rules": [rule_ids.get(str(x), str(x)) for x in c.get("rules") or []],
                  "params": [rename.get(("param", str(x)), str(x)) for x in c.get("params") or []],
                  **({"reason": str(c["reason"])[:200]} if c.get("reason") else {})} for c in raw.get("coverage") or []]
-    return {"program": program, "ruleset": ruleset, "coverage": coverage, "notes": str(raw.get("notes", ""))[:600]}
+    return {"ruleset": ruleset, "coverage": coverage, "notes": str(raw.get("notes", ""))[:600]}
 
-def plan_issues(out: dict, n_sentences: int) -> list:
-    """What's missing from a valid plan: sentences without coverage, operator settings no rule uses, unknown rule ids."""
-    issues, rs = [], out["ruleset"]
-    covered = {c["sentence"].upper() for c in out["coverage"]}
+def rules_issues(rules: dict, n_sentences: int, layout: list) -> list:
+    """What's missing from a valid rule plan: uncovered sentences, unused operator settings, unknown rule ids."""
+    issues, rs = [], rules["ruleset"]
+    covered = {c["sentence"] for c in rules["coverage"]} | set(layout)
     missing = [f"S{i}" for i in range(1, n_sentences + 1) if f"S{i}" not in covered]
     if missing: issues.append(f"no coverage entry for {', '.join(missing)}")
     used = " ".join(r["test"] for r in rs["rules"])
@@ -527,7 +546,7 @@ def plan_issues(out: dict, n_sentences: int) -> list:
         if p.get("operator") and f"param.{name}" not in used:
             issues.append(f"operator setting param.{name} is not used by any rule")
     ids = {r["id"] for r in rs["rules"]}
-    for c in out["coverage"]:
+    for c in rules["coverage"]:
         if c["how"] == "rule" and (not c["rules"] or any(x not in ids for x in c["rules"])):
             issues.append(f"{c['sentence']} is marked as a rule but names no existing rule")
         if c["how"] == "operator_setting" and not any(rs["params"].get(x, {}).get("operator") for x in c["params"]):
@@ -537,36 +556,39 @@ def plan_issues(out: dict, n_sentences: int) -> list:
 _plan_times: list = []
 _genai = {"client": None}
 
-def numbered_sentences(spec_text: str) -> list:
-    """The specification as sentences S1, S2, ... (one per line, or per sentence within a line)."""
-    out = []
-    for line in spec_text.splitlines():
-        for part in re.split(r"(?<=[.!?])\s+", line.strip()):
-            if part.strip(): out.append(part.strip())
-    return out
-
-def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
-    """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards).
-    Thinking is kept LOW: planning a pushpin box needs a careful mapping, not minutes of deliberation, and a high
-    thinking level can run past the request deadline. Models that don't take a thinking level get the call without it."""
+def call_gemini(model, jpeg, text, instructions, schema, on_thought=None, on_text=None) -> dict:
+    """One structured-output call to Gemini on Vertex AI, streamed: thought summaries and the JSON as it forms are
+    passed to the callbacks as they arrive. Thinking is kept LOW (fast; the validator checks the result anyway);
+    models that don't take a thinking level get the call without it. Returns the parsed JSON."""
     from google import genai
     from google.genai import types
     if _genai["client"] is None:
         _genai["client"] = genai.Client(vertexai=True, project=PROJECT_ID or None, location=PLANNER_LOC,
                                         http_options=types.HttpOptions(timeout=PLANNER_TIMEOUT_S * 1000))
     def config(thinking: bool):
-        return types.GenerateContentConfig(
-            system_instruction=PLANNER_INSTRUCTIONS, temperature=0, response_mime_type="application/json",
-            response_json_schema=PLAN_SCHEMA,
-            **({"thinking_config": types.ThinkingConfig(thinking_level=PLANNER_THINK)} if thinking and PLANNER_THINK else {}))
-    contents = [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), spec_text]
+        think = {"thinking_config": types.ThinkingConfig(thinking_level=PLANNER_THINK, include_thoughts=True)} if thinking and PLANNER_THINK else {}
+        return types.GenerateContentConfig(system_instruction=instructions, temperature=0,
+                                           response_mime_type="application/json", response_json_schema=schema, **think)
+    contents = [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), text]
+    def run(thinking: bool) -> str:
+        answer = []
+        for chunk in _genai["client"].models.generate_content_stream(model=model, contents=contents, config=config(thinking)):
+            for cand in chunk.candidates or []:
+                for part in (cand.content.parts if cand.content else None) or []:
+                    if not part.text: continue
+                    if getattr(part, "thought", False):
+                        if on_thought: on_thought(part.text)
+                    else:
+                        answer.append(part.text)
+                        if on_text: on_text(part.text)
+        return "".join(answer)
     try:
-        resp = _genai["client"].models.generate_content(model=model, contents=contents, config=config(True))
+        out = run(True)
     except Exception as ex:
         if "thinking" not in str(ex).lower():
             raise
-        resp = _genai["client"].models.generate_content(model=model, contents=contents, config=config(False))
-    return json.loads(resp.text)
+        out = run(False)
+    return json.loads(out)
 
 def transient(ex: Exception) -> bool:
     """Errors worth one more try: timeouts, overload, rate limits."""
@@ -583,42 +605,66 @@ def plan_models():
     return {"models": PLANNER_MODELS}
 
 PLAN_JOBS: dict = {}
+STREAM_CAP = 20_000
 
-def plan_sync(body: PlanIn) -> dict:
-    """Run the planner (one or two Gemini calls). Raises HTTPException with a readable message on failure."""
+def plan_sync(body: PlanIn, job: Optional[dict] = None) -> dict:
+    """Plan in two Gemini calls: the region program, then the rules (told what the regions are on the sample).
+    Each call gets at most two attempts: a retry on a timeout/overload, or one correction when the answer fails
+    validation or misses a sentence. `job` (optional) receives the streamed thinking and output, and the stages."""
+    job = job if job is not None else {}
     im = decode_image(body.image)
-    im.thumbnail((1280, 1280))                    # plenty for planning regions; smaller is faster
-    buf = io.BytesIO(); im.save(buf, format="JPEG", quality=88)
+    small = im.copy(); small.thumbnail((1024, 1024))              # enough to plan regions; smaller is faster
+    buf = io.BytesIO(); small.save(buf, format="JPEG", quality=88)
     sentences = numbered_sentences(body.spec_text)
-    prompt = "Written specification, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
-    t0, out, problems, attempts = time.time(), None, [], 0
-    for attempt in range(2):                     # one retry, telling the model exactly what was wrong
-        attempts += 1
-        ask = prompt if attempt == 0 else prompt + "\n\nYour previous plan had these problems; return a corrected plan:\n- " + "\n- ".join(problems)
-        try:
+    spec = "Written specification, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
+    t0 = time.time()
+
+    def stage(name, instructions, schema, prompt, normalize, issues_of=None):
+        stream = job.setdefault(name, {"thoughts": "", "output": "", "attempts": 0})
+        add = lambda key: (lambda t: stream.__setitem__(key, (stream[key] + t)[-STREAM_CAP:]))
+        result, problems = None, []
+        for attempt in range(2):
+            stream["attempts"] = attempt + 1; stream["output"] = ""
+            ask = prompt if not problems else prompt + "\n\nYour previous answer had these problems; return a corrected one:\n- " + "\n- ".join(problems)
             try:
-                raw = call_gemini(body.model, buf.getvalue(), ask)
+                raw = call_gemini(body.model, buf.getvalue(), ask, instructions, schema, add("thoughts"), add("output"))
             except Exception as ex:
-                if not transient(ex):
-                    raise
-                print(f"planner: {type(ex).__name__} ({str(ex)[:80]}); retrying once", flush=True)
-                time.sleep(3)
-                raw = call_gemini(body.model, buf.getvalue(), ask)
-        except Exception as ex:
-            raise HTTPException(502, f"{body.model} could not be reached: {type(ex).__name__}: {str(ex)[:300]}")
-        try:
-            cand = normalize_plan(raw)
-        except HTTPException as ex:
-            problems = [f"validation failed: {ex.detail}"]; continue
-        except Exception as ex:
-            problems = [f"validation failed: {ex}"]; continue
-        out, problems = cand, plan_issues(cand, len(sentences))
-        if not problems: break
-    if out is None:
-        raise HTTPException(422, f"{body.model} returned a plan that failed validation: {'; '.join(problems)}")
-    out.update(model=body.model, seconds=round(time.time() - t0, 1), attempts=attempts, warnings=problems,
-               sentences=[{"id": f"S{i}", "text": t} for i, t in enumerate(sentences, 1)])
-    return out
+                if attempt == 0 and transient(ex):
+                    print(f"planner {name}: {type(ex).__name__} ({str(ex)[:80]}); retrying once", flush=True)
+                    problems = []; time.sleep(3); continue
+                raise HTTPException(502, f"{body.model} could not be reached ({name}): {type(ex).__name__}: {str(ex)[:300]}")
+            try:
+                cand = normalize(raw)
+            except HTTPException as ex:
+                problems = [f"validation failed: {ex.detail}"]; continue
+            except Exception as ex:
+                problems = [f"validation failed: {ex}"]; continue
+            result, problems = cand, (issues_of(cand) if issues_of else [])
+            if not problems: break
+        if result is None:
+            raise HTTPException(422, f"{body.model} returned a {name} plan that failed validation: {'; '.join(problems)}")
+        return result, problems
+
+    job["stage"] = "regions"
+    regions, _ = stage("regions", REGION_INSTRUCTIONS, REGION_SCHEMA, spec, normalize_region)
+    try:                                                          # what the program produces on this sample
+        res = run_region_program(im, regions["program"])
+        seen = f"{res['rows']} x {res['cols']} regions" + (f", {len(res['walls'])} measured walls" if res["walls"] else "") + \
+               (f"; region ids: {', '.join(str(c['id']) for c in res['cells'] if c.get('id'))}" if any(c.get("id") for c in res["cells"]) else "")
+    except Exception as ex:
+        raise HTTPException(422, f"the planned region program doesn't run on this sample: {ex}")
+    job["region_result"] = {"program": regions["program"], "notes": regions["notes"]}
+
+    job["stage"] = "rules"
+    prompt = spec + f"\n\nRegions (already planned): {json.dumps(regions['program'])}\nOn the sample photo this gives {seen}." + \
+             (f"\nLayout sentences (handled by the regions, no coverage needed): {', '.join(regions['layout_sentences'])}" if regions["layout_sentences"] else "")
+    rules, warnings = stage("rules", RULES_INSTRUCTIONS, RULES_SCHEMA, prompt, normalize_rules,
+                            lambda r: rules_issues(r, len(sentences), regions["layout_sentences"]))
+    coverage = [{"sentence": s, "how": "layout", "rules": [], "params": []} for s in regions["layout_sentences"]] + rules["coverage"]
+    return {"program": regions["program"], "ruleset": rules["ruleset"], "coverage": coverage, "warnings": warnings,
+            "notes": " ".join(x for x in (regions["notes"], rules["notes"]) if x),
+            "attempts": job["regions"]["attempts"] + job["rules"]["attempts"], "model": body.model,
+            "seconds": round(time.time() - t0, 1), "sentences": [{"id": f"S{i}", "text": t} for i, t in enumerate(sentences, 1)]}
 
 def plan_guard(body: PlanIn, x_admin_token: str):
     if ADMIN_TOKEN and x_admin_token != ADMIN_TOKEN:
@@ -638,19 +684,18 @@ def plan(body: PlanIn, x_admin_token: str = ""):
 
 @app.post("/api/plan")
 def plan_start(body: PlanIn, x_admin_token: str = Header(default="")):
-    """Start planning and return at once; the page polls GET /api/plan/{id}. Planning can take longer than the
-    one-minute limit Firebase Hosting puts on a request (Gemini, plus a retry if a sentence was missed)."""
+    """Start planning and return at once; the page polls GET /api/plan/{id} for the streamed thinking and the result.
+    Planning can take longer than the one-minute limit Firebase Hosting puts on a request."""
     plan_guard(body, x_admin_token)
     decode_image(body.image)                      # reject a bad image now, not inside the job
     now = time.time()
     for k in [k for k, j in PLAN_JOBS.items() if now - j["created"] > JOB_TTL_S]:
         PLAN_JOBS.pop(k, None)
     job_id = uuid.uuid4().hex[:12]
-    PLAN_JOBS[job_id] = {"state": "running", "created": now}
+    job = PLAN_JOBS[job_id] = {"state": "running", "created": now, "stage": "starting"}
     def work():
-        job = PLAN_JOBS[job_id]
         try:
-            job.update(state="done", result=plan_sync(body))
+            job.update(state="done", result=plan_sync(body, job))
         except HTTPException as ex:
             job.update(state="error", status=ex.status_code, error=ex.detail)
         except Exception as ex:
@@ -664,7 +709,8 @@ def plan_status(job_id: str):
     job = PLAN_JOBS.get(job_id)
     if not job:
         raise HTTPException(404, "unknown or expired planning job")
-    out = {"state": job["state"], "elapsed": round(time.time() - job["created"], 1)}
+    out = {"state": job["state"], "stage": job.get("stage"), "elapsed": round(time.time() - job["created"], 1),
+           "regions": job.get("regions"), "rules": job.get("rules"), "region_result": job.get("region_result")}
     if job["state"] == "done": out["result"] = job["result"]
     if job["state"] == "error": out.update(error=job["error"], status=job["status"])
     return out

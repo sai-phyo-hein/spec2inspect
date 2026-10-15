@@ -422,3 +422,4 @@ button.link { background: none; border: 0; padding: 0; color: var(--info); font-
 .rule-sentences { list-style: none; padding-left: 0; }
 .rule-sentences li { margin-bottom: 4px; }
 .rule-meta p { margin: 2px 0; font-size: .82rem; }
+.json.streaming { color: #b9a8ff; font-style: italic; white-space: pre-wrap; }

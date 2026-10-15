@@ -27,6 +27,8 @@ const valid = () => draft.rulesValid && draft.progValid;
 /** @type {{ entry: Entry | null, canvas: HTMLCanvasElement, w: number, h: number, labelled: boolean } | null} */ let sample = null;
 let stale = false;                                   // inputs changed since the last Process
 /** @type {{ model: string, seconds: number } | null} */ let plannedBy = null;
+/** @type {{ prog: string, rules: string } | null} */ let restoreOnFail = null;
+let planning = false;
 /** @type {{ name: string, url: string, entry?: Entry }[]} */ let samples = [];
 const esc = (/** @type {string} */ s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] || c);
 
@@ -126,8 +128,8 @@ function updateStatus() {
 
 function renderStale() {
   const tag = $("ad-out-tag");
-  tag.classList.toggle("stale", stale);
-  tag.textContent = stale ? "inputs changed · press Process"
+  tag.classList.toggle("stale", stale && !planning);
+  tag.textContent = planning ? "planning…" : stale ? "inputs changed · press Process"
     : plannedBy ? `planned by ${plannedBy.model} · ${plannedBy.seconds} s` : "planner output";
 }
 
@@ -248,31 +250,56 @@ async function processInputs() {
     const it = samples[parseInt($select("ad-sample").value, 10)];
     const canvas = it.entry ? (await boxImage(it.entry)).canvas : await photoCanvas(it.url);
     const model = $select("ad-model").value;
+    planning = true; renderStale();
+    const progBox = $input("ad-prog"), rulesBox = $input("ad-json");
+    const before = { prog: progBox.value, rules: rulesBox.value };          // restored if planning fails
+    restoreOnFail = before;
     const { id } = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), model, image: canvas.toDataURL("image/jpeg", 0.9) });
+    /** @param {{ thoughts: string, output: string, attempts: number } | null | undefined} st @param {string} what */
+    const streamText = (st, what) => !st ? `Waiting for the ${what}…`
+      : `Thinking${st.attempts > 1 ? ` (attempt ${st.attempts})` : ""}:\n${st.thoughts || "…"}${st.output ? `\n\nOutput so far:\n${st.output}` : ""}`;
     /** @type {any} */ let plan = null;
+    let regionsShown = false;
     const t0 = Date.now();
-    while (!plan) {                                      // planning runs as a job; poll until it finishes
-      await new Promise((res) => setTimeout(res, 1000));
+    progBox.classList.add("streaming"); rulesBox.classList.add("streaming");
+    while (!plan) {                                      // planning runs as a job; poll its streamed thinking
+      await new Promise((res) => setTimeout(res, 700));
       const r = await fetch(`api/plan/${id}`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
-      if (j.state === "done") plan = j.result;
-      else if (j.state === "error") throw new Error(j.error);
-      else notes.textContent = `Asking ${model} to plan the inspection… ${Math.round(j.elapsed ?? (Date.now() - t0) / 1000)} s`;
-      if (Date.now() - t0 > 5 * 60000) throw new Error("the planner took longer than 5 minutes");
+      if (j.state === "error") throw new Error(j.error);
+      if (j.region_result && !regionsShown) {          // regions planned: show the program and divide the sample now
+        regionsShown = true; progBox.classList.remove("streaming");
+        progBox.value = JSON.stringify(j.region_result.program, null, 2); readProgram();
+        loadSample(parseInt($select("ad-sample").value, 10), true);
+      } else if (!regionsShown) {
+        progBox.value = streamText(j.regions, "region planner"); progBox.scrollTop = progBox.scrollHeight;
+      }
+      if (j.state === "done") { plan = j.result; break; }
+      if (regionsShown) { rulesBox.value = streamText(j.rules, "rules planner"); rulesBox.scrollTop = rulesBox.scrollHeight; }
+      else rulesBox.value = "Waiting for the regions to be planned first…";
+      const sec = Math.round(j.elapsed ?? (Date.now() - t0) / 1000);
+      notes.textContent = j.stage === "rules" ? `${model} is planning the rules… ${sec} s` : `${model} is planning the regions… ${sec} s`;
+      if (Date.now() - t0 > 10 * 60000) throw new Error("the planner took longer than 10 minutes");
     }
+    progBox.classList.remove("streaming"); rulesBox.classList.remove("streaming");
+    restoreOnFail = null;
     $input("ad-prog").value = JSON.stringify(plan.program, null, 2); readProgram();
     $input("ad-json").value = ruleSetToJson(plan.ruleset); readJson();
     plannedBy = { model: plan.model, seconds: plan.seconds };
     notes.textContent = (plan.notes ? `Planner notes: ${plan.notes}` : "The planner added no notes.") +
-                        (plan.attempts > 1 ? ` (planned in ${plan.attempts} attempts: the first plan missed something and was sent back)` : "");
+                        (plan.attempts > 2 ? ` (${plan.attempts} calls: an answer was corrected or retried)` : "");
     renderCoverage(plan);
     btn.textContent = "Dividing the sample…";
     await loadSample(parseInt($select("ad-sample").value, 10), true);
     stale = false; refresh();
   } catch (e) {
+    if (restoreOnFail) {                                 // put back what was there before the stream replaced it
+      $input("ad-prog").value = restoreOnFail.prog; $input("ad-json").value = restoreOnFail.rules; restoreOnFail = null;
+      $("ad-prog").classList.remove("streaming"); $("ad-json").classList.remove("streaming"); readProgram(); readJson();
+    }
     notes.textContent = `Planning failed: ${e instanceof Error ? e.message : e}. The previous output is unchanged.`;
-  } finally { btn.disabled = false; btn.textContent = "Process"; }
+  } finally { planning = false; renderStale(); btn.disabled = false; btn.textContent = "Process"; }
 }
 
 function discardDraft() {
