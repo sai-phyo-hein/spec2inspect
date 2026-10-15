@@ -48,6 +48,8 @@ PROJECT_ID     = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
 PLANNER_MODELS = [m.strip() for m in os.environ.get("PLANNER_MODELS", "gemini-3.5-pro").split(",") if m.strip()]
 PLANNER_LOC    = os.environ.get("PLANNER_LOCATION", "global")     # Gemini 3.x on Vertex AI: the global endpoint
 PLANS_PER_MIN  = int(os.environ.get("PLANS_PER_MINUTE", "6"))     # cost guard for the public page
+PLANNER_THINK  = os.environ.get("PLANNER_THINKING", "LOW")        # Gemini thinking level: MINIMAL, LOW, MEDIUM, HIGH
+PLANNER_TIMEOUT_S = int(os.environ.get("PLANNER_TIMEOUT_S", "240"))
 MAX_SAMPLES    = 40                                           # tray photos listed from the dataset
 
 app = FastAPI(title="spec2inspect", docs_url=None, redoc_url=None)
@@ -544,18 +546,32 @@ def numbered_sentences(spec_text: str) -> list:
     return out
 
 def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
-    """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards)."""
+    """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards).
+    Thinking is kept LOW: planning a pushpin box needs a careful mapping, not minutes of deliberation, and a high
+    thinking level can run past the request deadline. Models that don't take a thinking level get the call without it."""
     from google import genai
     from google.genai import types
     if _genai["client"] is None:
         _genai["client"] = genai.Client(vertexai=True, project=PROJECT_ID or None, location=PLANNER_LOC,
-                                        http_options=types.HttpOptions(timeout=120_000))
-    resp = _genai["client"].models.generate_content(
-        model=model,
-        contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), spec_text],
-        config=types.GenerateContentConfig(system_instruction=PLANNER_INSTRUCTIONS, temperature=0,
-                                           response_mime_type="application/json", response_json_schema=PLAN_SCHEMA))
+                                        http_options=types.HttpOptions(timeout=PLANNER_TIMEOUT_S * 1000))
+    def config(thinking: bool):
+        return types.GenerateContentConfig(
+            system_instruction=PLANNER_INSTRUCTIONS, temperature=0, response_mime_type="application/json",
+            response_json_schema=PLAN_SCHEMA,
+            **({"thinking_config": types.ThinkingConfig(thinking_level=PLANNER_THINK)} if thinking and PLANNER_THINK else {}))
+    contents = [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), spec_text]
+    try:
+        resp = _genai["client"].models.generate_content(model=model, contents=contents, config=config(True))
+    except Exception as ex:
+        if "thinking" not in str(ex).lower():
+            raise
+        resp = _genai["client"].models.generate_content(model=model, contents=contents, config=config(False))
     return json.loads(resp.text)
+
+def transient(ex: Exception) -> bool:
+    """Errors worth one more try: timeouts, overload, rate limits."""
+    msg = str(ex).upper()
+    return any(k in msg for k in ("DEADLINE_EXCEEDED", "504", "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "TIMED OUT"))
 
 class PlanIn(BaseModel):
     spec_text: str = Field(min_length=3, max_length=4000)
@@ -571,8 +587,8 @@ PLAN_JOBS: dict = {}
 def plan_sync(body: PlanIn) -> dict:
     """Run the planner (one or two Gemini calls). Raises HTTPException with a readable message on failure."""
     im = decode_image(body.image)
-    im.thumbnail((1600, 1600))
-    buf = io.BytesIO(); im.save(buf, format="JPEG", quality=90)
+    im.thumbnail((1280, 1280))                    # plenty for planning regions; smaller is faster
+    buf = io.BytesIO(); im.save(buf, format="JPEG", quality=88)
     sentences = numbered_sentences(body.spec_text)
     prompt = "Written specification, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
     t0, out, problems, attempts = time.time(), None, [], 0
@@ -580,7 +596,14 @@ def plan_sync(body: PlanIn) -> dict:
         attempts += 1
         ask = prompt if attempt == 0 else prompt + "\n\nYour previous plan had these problems; return a corrected plan:\n- " + "\n- ".join(problems)
         try:
-            raw = call_gemini(body.model, buf.getvalue(), ask)
+            try:
+                raw = call_gemini(body.model, buf.getvalue(), ask)
+            except Exception as ex:
+                if not transient(ex):
+                    raise
+                print(f"planner: {type(ex).__name__} ({str(ex)[:80]}); retrying once", flush=True)
+                time.sleep(3)
+                raw = call_gemini(body.model, buf.getvalue(), ask)
         except Exception as ex:
             raise HTTPException(502, f"{body.model} could not be reached: {type(ex).__name__}: {str(ex)[:300]}")
         try:

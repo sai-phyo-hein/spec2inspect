@@ -119,5 +119,6 @@ class PlannerCoverageTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertTrue(any("S4" in w for w in out["warnings"]))
 
+
 if __name__ == "__main__":
     unittest.main()
