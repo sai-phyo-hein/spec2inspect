@@ -170,7 +170,7 @@ export function evaluateRuleSet(entry, colors, rs, threshold, wallMin = WALL_MIN
       status[rule.id] = !judged ? "n/a" : fail ? "fail" : "pass";
     } else {
       const { ok, used } = evalBox(tree, {
-        cells: cells.map((c, k) => ({ r: c.r, c: c.c, id: /** @type {any} */ (c).id, dists: dists(c), colour: colors ? (colors[k] ?? null) : null })),
+        cells: cells.map((c, k) => ({ r: c.r, c: c.c, id: /** @type {any} */ (c).id, dists: dists(c), colour: colors ? (colors[k] ?? null) : undefined })),
         wallsMissing: missingWalls.length, params: values,
       });
       if (ok === null) { status[rule.id] = "n/a"; continue; }

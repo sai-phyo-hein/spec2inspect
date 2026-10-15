@@ -95,3 +95,11 @@ test('"any" colour is not enforced, and repeated region failures become one find
   assert.equal(parseRuleSet({ params: { c: { default: "any", kind: "colour", operator: true } },
                               rules: [{ for: "all", test: "colour == param.c" }] }).params.c.default, "any");
 });
+
+test("colour rules are unknown (not failed) when pin colours weren't measured", () => {
+  const rs = parseRuleSet({ rules: [{ id: "R1", test: "distinct(colour) > 1" }] });
+  assert.equal(evaluateRuleSet(box(ones), null, rs, 0.5, 0.3).status.R1, "n/a");                    // recordings: no colours
+  assert.equal(evaluateRuleSet(box(ones), Array(15).fill("yellow"), rs, 0.5, 0.3).status.R1, "fail");
+  const mixed = Array(15).fill("yellow"); mixed[3] = "blue";
+  assert.equal(evaluateRuleSet(box(ones), mixed, rs, 0.5, 0.3).status.R1, "pass");
+});

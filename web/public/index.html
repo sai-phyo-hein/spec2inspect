@@ -144,7 +144,10 @@
       <section class="card">
         <div class="card-head"><h2 class="cond">1 · Inputs</h2><span class="mono muted" style="font-size:.75rem">from the engineer</span></div>
         <div class="ad-inputs">
-          <label>Written specification<textarea id="ad-spec" rows="4" spellcheck="false"></textarea></label>
+          <label>Container information <span class="muted">(layout, compartments, walls: used to plan the regions)</span>
+            <textarea id="ad-info" rows="2" spellcheck="false"></textarea></label>
+          <label>Measurements <span class="muted">(one per line: each becomes one or more rules)</span>
+            <textarea id="ad-spec" rows="4" spellcheck="false"></textarea></label>
           <label>Sample image <span class="muted">(an empty container, mock items, or a real photo)</span><select id="ad-sample"></select></label>
           <div class="ad-run">
             <label>Planner model
@@ -153,7 +156,7 @@
               </select></label>
             <button type="button" class="primary" id="ad-process">Process</button>
           </div>
-          <p class="muted ad-model-note">Process sends the specification and the sample image to Gemini on Vertex AI. Its plan is validated, then verified below; nothing reaches the line until you approve it.</p>
+          <p class="muted ad-model-note">Process sends the container information, the measurements and the sample image to Gemini on Vertex AI. Its plan is validated, then verified below; nothing reaches the line until you approve it.</p>
         </div>
       </section>
       <section class="card">

@@ -147,5 +147,5 @@ export interface SpecVersion {
   ruleset?: RuleSetV2;
   /** specifications approved before rules/v2 */
   rules?: { type: RuleType; on: boolean; p: RuleParams; operator?: (keyof RuleParams)[] }[]; threshold?: number;
-  accuracy: AccuracyReport | null; spec_text?: string;
+  accuracy: AccuracyReport | null; spec_text?: string; info_text?: string;
 }

@@ -7,21 +7,21 @@ import app_web  # noqa: E402
 import spec_rules  # noqa: E402
 from tests.test_region_program import synthetic_box  # noqa: E402
 
-SPEC = ("Info about the container: equally spaced compartments, 3 rows and 5 columns.\n"
-        "Each compartment holds exactly one pushpin.\nThe box holds 15 pushpins in total.\n"
+INFO = "Equally spaced compartments, 3 rows and 5 columns, separated by walls."
+SPEC = ("Each compartment holds exactly one pushpin.\nThe box holds 15 pushpins in total.\n"
         "Every compartment is enclosed by walls.\nThe user can change the detecting colour.")
 REGIONS = {"region_program": {"steps": [{"op": "normalize_light"}, {"op": "grid_from_walls", "rows": "3", "cols": "5"},
                                         {"op": "wall_segments", "missing_below": 0.3}]},
-           "layout_sentences": ["S1"], "notes": "A 3 x 5 grid from the walls."}
+           "notes": "A 3 x 5 grid from the walls."}
 RULES = {"params": [{"name": "detecting_colour", "kind": "colour", "default": "any", "operator": True, "label": "colour"}],
          "questions": [], "sensitivity": 0.5, "notes": "ok",
          "rules": [{"id": "one_pin", "text": "Each compartment holds one pushpin", "for": "all", "test": "count == 1"},
                    {"id": "R2", "text": "15 in total", "test": "total(count) == 15"},
                    {"id": "R3", "text": "Walls present", "test": "walls.missing == 0"},
                    {"id": "R4", "text": "Pins have the selected colour", "for": "all", "test": "colour == param.detecting_colour"}],
-         "coverage": [{"sentence": "S2", "how": "rule", "rules": ["one_pin"]}, {"sentence": "S3", "how": "rule", "rules": ["R2"]},
-                      {"sentence": "S4", "how": "rule", "rules": ["R3"]},
-                      {"sentence": "S5", "how": "operator_setting", "params": ["detecting_colour"], "rules": ["R4"]}]}
+         "coverage": [{"sentence": "S1", "how": "rule", "rules": ["one_pin"]}, {"sentence": "S2", "how": "rule", "rules": ["R2"]},
+                      {"sentence": "S3", "how": "rule", "rules": ["R3"]},
+                      {"sentence": "S4", "how": "operator_setting", "params": ["detecting_colour"], "rules": ["R4"]}]}
 
 def photo():
     buf = io.BytesIO(); synthetic_box(3, 5).save(buf, format="JPEG")
@@ -42,7 +42,7 @@ class Fake:
 
 def run(fake, job=None):
     app_web.call_gemini = fake; app_web._plan_times.clear()
-    body = app_web.PlanIn(spec_text=SPEC, image=photo(), model=app_web.PLANNER_MODELS[0])
+    body = app_web.PlanIn(spec_text=SPEC, info_text=INFO, image=photo(), model=app_web.PLANNER_MODELS[0])
     return app_web.plan_sync(body, job)
 
 class TwoStagePlannerTest(unittest.TestCase):
@@ -52,7 +52,9 @@ class TwoStagePlannerTest(unittest.TestCase):
         self.assertEqual(out["program"]["steps"][1]["rows"], 3)                      # "3" -> 3, as the spec states
         self.assertIn("3 x 5 regions, 22 measured walls", fake.prompts["rules"][0])  # rules are told what the regions are
         self.assertEqual([r["id"] for r in out["ruleset"]["rules"]], ["R1", "R2", "R3", "R4"])
-        self.assertEqual(out["coverage"][0], {"sentence": "S1", "how": "layout", "rules": [], "params": []})
+        self.assertEqual(out["coverage"][0]["sentence"], "S1")
+        self.assertIn("Container information:\nEqually spaced compartments", fake.prompts["regions"][0])   # info goes to both calls
+        self.assertIn("S1: Each compartment holds exactly one pushpin.", fake.prompts["rules"][0])
         self.assertEqual((out["warnings"], out["attempts"]), ([], 2))
         self.assertIn("thinking about regions", job["regions"]["thoughts"])           # streamed into the job
         self.assertIn("thinking about rules", job["rules"]["thoughts"])
@@ -61,7 +63,7 @@ class TwoStagePlannerTest(unittest.TestCase):
         partial = {**RULES, "rules": RULES["rules"][:3], "params": [], "coverage": RULES["coverage"][:3]}
         fake = Fake([REGIONS], [partial, RULES])
         out = run(fake)
-        self.assertIn("no coverage entry for S5", fake.prompts["rules"][1])
+        self.assertIn("no coverage entry for S4", fake.prompts["rules"][1])
         self.assertEqual((len(out["ruleset"]["rules"]), out["warnings"]), (4, []))
 
     def test_at_most_two_attempts_per_call(self):
@@ -69,7 +71,7 @@ class TwoStagePlannerTest(unittest.TestCase):
         fake = Fake([REGIONS], [partial, partial, partial])
         out = run(fake)
         self.assertEqual(len(fake.prompts["rules"]), 2)
-        self.assertTrue(any("S5" in w for w in out["warnings"]))
+        self.assertTrue(any("S4" in w for w in out["warnings"]))
 
     def test_a_timeout_is_retried_once_then_reported(self):
         fake = Fake([RuntimeError("504 DEADLINE_EXCEEDED"), REGIONS], [RULES])
@@ -86,6 +88,14 @@ class TwoStagePlannerTest(unittest.TestCase):
         bad_rules = {**RULES, "rules": [{"id": "R1", "text": "x", "for": "all", "test": "__import__('os')"}]}
         with self.assertRaises(app_web.HTTPException):
             run(Fake([REGIONS], [bad_rules]))
+
+class SeparateInputsTest(unittest.TestCase):
+    def test_container_information_needs_no_rules_but_every_measurement_does(self):
+        skipped = {**RULES, "coverage": [c for c in RULES["coverage"] if c["sentence"] != "S1"]}
+        fake = Fake([REGIONS], [skipped, RULES])
+        out = run(fake)
+        self.assertIn("no coverage entry for S1", fake.prompts["rules"][1])        # a measurement can't be skipped
+        self.assertEqual([c["sentence"] for c in out["coverage"]], ["S1", "S2", "S3", "S4"])   # only measurements numbered
 
 class NamesAndValuesTest(unittest.TestCase):
     def test_names_are_shortened_and_references_rewritten(self):

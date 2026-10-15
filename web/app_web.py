@@ -326,7 +326,8 @@ class SpecIn(BaseModel):
     layout: Optional[Layout] = None
     ruleset: dict                             # rules/v2: expression rules, parameters, questions (validated below)
     accuracy: Optional[dict] = None           # the report shown when it was approved (None for mock images)
-    spec_text: str = Field("", max_length=4000)   # the engineer's written specification the rules came from
+    spec_text: str = Field("", max_length=4000)   # the measurements (written specification) the rules came from
+    info_text: str = Field("", max_length=2000)   # container information the region program came from
 
 class MemorySpecs:
     def __init__(self): self.items = []
@@ -389,11 +390,9 @@ REGION_SCHEMA = {
     "type": "object",
     "properties": {
         "region_program": {"type": "object", "properties": {"steps": {"type": "array", "items": STEP_SCHEMA}}, "required": ["steps"]},
-        "layout_sentences": {"type": "array", "items": {"type": "string"},
-                             "description": "ids of the sentences (S1, S2, ...) that describe the container itself"},
         "notes": {"type": "string", "description": "one sentence: how the container is divided"},
     },
-    "required": ["region_program", "layout_sentences", "notes"],
+    "required": ["region_program", "notes"],
 }
 
 RULES_SCHEMA = {
@@ -415,7 +414,7 @@ RULES_SCHEMA = {
             "for": {"type": "string", "description": "per-region rules only: all, row N, col N, cell R C or region NAME"},
             "test": {"type": "string", "description": "the expression"}},
             "required": ["id", "text", "test"]}},
-        "coverage": {"type": "array", "description": "one entry per numbered sentence that is not a layout sentence", "items": {
+        "coverage": {"type": "array", "description": "one entry per numbered measurement S1, S2, ...", "items": {
             "type": "object", "properties": {
                 "sentence": {"type": "string", "description": "the sentence id, e.g. S3"},
                 "how": {"type": "string", "enum": ["rule", "operator_setting", "not_expressible"]},
@@ -430,21 +429,22 @@ RULES_SCHEMA = {
 }
 
 REGION_INSTRUCTIONS = """You are the region planner of an automated visual inspection station.
-An engineer gives you a written specification (numbered sentences S1, S2, ...) and one sample photo of the product's
-container (it may be empty, hold mock items, or hold real products). Decide how each photo is divided into regions,
-as an ordered list of steps from this fixed set:
+An engineer gives you information about a product's container, the list of measurements the station will check
+(for context only: you don't write rules), and one sample photo of the container (it may be empty, hold mock items, or
+hold real products). Decide how each photo is divided into regions, as an ordered list of steps from this fixed set:
 - normalize_light: auto-gain for the geometric steps. Use it first.
-- grid_from_walls (rows, cols): compartments found from the container's own wall lines. Use "auto" unless the
-  specification states the layout, in which case give the numbers. Use this whenever the container is a grid.
+- grid_from_walls (rows, cols): compartments found from the container's own wall lines. Give the numbers when the
+  container information states them, otherwise "auto". Use this whenever the container is a grid.
 - fixed_regions (regions): explicit rectangles as fractions of the photo [x0, y0, x1, y1], only for containers that are
   not a grid. Give each region a short id.
-- wall_segments (missing_below): measure every internal wall; include it whenever the specification mentions walls
-  or separators. Default missing_below 0.3.
-Also list the sentences that describe the container itself (layout_sentences). Return only the JSON."""
+- wall_segments (missing_below): measure every internal wall; include it whenever a measurement or the container
+  information mentions walls or separators. Default missing_below 0.3.
+Return only the JSON."""
 
 RULES_INSTRUCTIONS = """You are the rules planner of an automated visual inspection station.
-You get a written specification as numbered sentences S1, S2, ..., one sample photo of the container, and the regions
-the station divides each photo into (already planned). Write one rule per checkable sentence, as an expression.
+You get information about the container, the measurements to check as numbered sentences S1, S2, ..., one sample
+photo, and the regions the station divides each photo into (already planned). Write one rule per measurement, as an
+expression. The container information is context (it explains the regions); it needs no rules.
 - A rule with "for" is checked in every selected region: "all", "row N", "col N", "cell R C" (counting from 1), or
   "region <id>". Measurements in a region: count (number of pushpins/items, 0-9), colour (the dominant colour of the
   items: yellow, orange, red, pink, purple, blue, cyan, green), q.<id> (the answer to one of your questions).
@@ -462,10 +462,10 @@ the station divides each photo into (already planned). Write one rule per checka
   A short, visual question with answer yesno or count. At most 4.
 - Each rule's text says, in plain words, what it checks, not the sentence it came from.
 - Names: rule ids R1, R2, ...; parameter names and question ids short snake_case.
-- coverage: exactly one entry for every sentence that is not a layout sentence: "rule" (the rule ids that check it),
-  "operator_setting" (the operator params it introduces; each must be used by at least one rule, so add that rule if
-  needed), or "not_expressible" (with the reason). Never skip a sentence.
-Express every checkable sentence, and nothing the specification does not say. Return only the JSON."""
+- coverage: exactly one entry for EVERY measurement: "rule" (the rule ids that check it), "operator_setting" (the
+  operator params it introduces; each must be used by at least one rule, so add that rule if needed), or
+  "not_expressible" (with the reason). Never skip a measurement.
+Express every measurement, and nothing the measurements don't say. Return only the JSON."""
 
 def numbered_sentences(spec_text: str) -> list:
     """The specification as sentences S1, S2, ... (one per line, or per sentence within a line)."""
@@ -493,9 +493,7 @@ def normalize_region(raw: dict) -> dict:
             steps.append({"op": op, "missing_below": float(st.get("missing_below", 0.3))})
         elif op == "normalize_light":
             steps.append({"op": op})
-    return {"program": RegionProgram(steps=steps).as_dict(),
-            "layout_sentences": [str(x).upper() for x in raw.get("layout_sentences") or []],
-            "notes": str(raw.get("notes", ""))[:300]}
+    return {"program": RegionProgram(steps=steps).as_dict(), "notes": str(raw.get("notes", ""))[:300]}
 
 def normalize_rules(raw: dict) -> dict:
     """The rules planner's answer as a validated rule set plus sentence coverage. Rule ids are renumbered R1, R2, ...;
@@ -535,10 +533,10 @@ def normalize_rules(raw: dict) -> dict:
                  **({"reason": str(c["reason"])[:200]} if c.get("reason") else {})} for c in raw.get("coverage") or []]
     return {"ruleset": ruleset, "coverage": coverage, "notes": str(raw.get("notes", ""))[:600]}
 
-def rules_issues(rules: dict, n_sentences: int, layout: list) -> list:
-    """What's missing from a valid rule plan: uncovered sentences, unused operator settings, unknown rule ids."""
+def rules_issues(rules: dict, n_sentences: int) -> list:
+    """What's missing from a valid rule plan: uncovered measurements, unused operator settings, unknown rule ids."""
     issues, rs = [], rules["ruleset"]
-    covered = {c["sentence"] for c in rules["coverage"]} | set(layout)
+    covered = {c["sentence"] for c in rules["coverage"]}
     missing = [f"S{i}" for i in range(1, n_sentences + 1) if f"S{i}" not in covered]
     if missing: issues.append(f"no coverage entry for {', '.join(missing)}")
     used = " ".join(r["test"] for r in rs["rules"])
@@ -596,7 +594,8 @@ def transient(ex: Exception) -> bool:
     return any(k in msg for k in ("DEADLINE_EXCEEDED", "504", "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "TIMED OUT"))
 
 class PlanIn(BaseModel):
-    spec_text: str = Field(min_length=3, max_length=4000)
+    spec_text: str = Field(min_length=3, max_length=4000)     # the measurements, one per line
+    info_text: str = Field("", max_length=2000)               # information about the container
     image: str
     model: str = Field(max_length=60)
 
@@ -616,7 +615,8 @@ def plan_sync(body: PlanIn, job: Optional[dict] = None) -> dict:
     small = im.copy(); small.thumbnail((1024, 1024))              # enough to plan regions; smaller is faster
     buf = io.BytesIO(); small.save(buf, format="JPEG", quality=88)
     sentences = numbered_sentences(body.spec_text)
-    spec = "Written specification, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
+    info = f"Container information:\n{body.info_text.strip() or '(none given)'}\n\n"
+    spec = info + "Measurements, as numbered sentences:\n" + "\n".join(f"S{i}: {t}" for i, t in enumerate(sentences, 1))
     t0 = time.time()
 
     def stage(name, instructions, schema, prompt, normalize, issues_of=None):
@@ -656,11 +656,11 @@ def plan_sync(body: PlanIn, job: Optional[dict] = None) -> dict:
     job["region_result"] = {"program": regions["program"], "notes": regions["notes"]}
 
     job["stage"] = "rules"
-    prompt = spec + f"\n\nRegions (already planned): {json.dumps(regions['program'])}\nOn the sample photo this gives {seen}." + \
-             (f"\nLayout sentences (handled by the regions, no coverage needed): {', '.join(regions['layout_sentences'])}" if regions["layout_sentences"] else "")
+    prompt = spec + f"\n\nRegions (already planned): {json.dumps(regions['program'])}\nOn the sample photo this gives {seen}."
     rules, warnings = stage("rules", RULES_INSTRUCTIONS, RULES_SCHEMA, prompt, normalize_rules,
-                            lambda r: rules_issues(r, len(sentences), regions["layout_sentences"]))
-    coverage = [{"sentence": s, "how": "layout", "rules": [], "params": []} for s in regions["layout_sentences"]] + rules["coverage"]
+                            lambda r: rules_issues(r, len(sentences)))
+    order = {f"S{i}": i for i in range(1, len(sentences) + 1)}
+    coverage = sorted(rules["coverage"], key=lambda c: order.get(c["sentence"], 999))
     return {"program": regions["program"], "ruleset": rules["ruleset"], "coverage": coverage, "warnings": warnings,
             "notes": " ".join(x for x in (regions["notes"], rules["notes"]) if x),
             "attempts": job["regions"]["attempts"] + job["rules"]["attempts"], "model": body.model,

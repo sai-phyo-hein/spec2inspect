@@ -10,6 +10,7 @@ import { parseRuleSet, ruleSetToJson, ruleText, checkerOf, evaluateRuleSet } fro
 import { approved, approve, onApprovedChanged, DEFAULT_PROGRAM, wallMinOf } from "./spec.js";
 import { measureAccuracy } from "./accuracy.js";
 import { boxImage } from "./data.js";
+import { cellColours } from "./colours.js";
 /** @typedef {import("../../types/model").Entry} Entry */
 /** @typedef {import("../../types/model").RuleSetV2} RuleSetV2 */
 /** @typedef {import("../../types/model").RegionProgram} RegionProgram */
@@ -32,6 +33,9 @@ let planning = false;
 /** @type {{ name: string, url: string, entry?: Entry }[]} */ let samples = [];
 const esc = (/** @type {string} */ s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] || c);
 
+/** True when the draft region program measures walls. */
+const measuresWalls = () => draft.program.steps.some((st) => st.op === "wall_segments");
+
 /** True when the program is the plain grid-from-walls kind the recordings were analysed with. */
 const isRecordedKind = () => draft.program.steps.some((st) => st.op === "grid_from_walls") &&
                              !draft.program.steps.some((st) => st.op === "fixed_regions");
@@ -39,7 +43,7 @@ const isRecordedKind = () => draft.program.steps.some((st) => st.op === "grid_fr
 function renderPlan() {
   const l = draft.layout;
   $("ad-plan-text").textContent = !draft.progValid ? "fix the region program first"
-    : l ? `${l.rows} × ${l.cols} regions${sample && sample.entry ? `, ${sample.entry.walls.length} walls` : ""}` : "press Process";
+    : l ? `${l.rows} × ${l.cols} regions${measuresWalls() && sample && sample.entry ? `, ${sample.entry.walls.length} walls measured` : measuresWalls() ? "" : " · walls not measured (no wall_segments step)"}` : "press Process";
 }
 
 function renderRules() {
@@ -63,7 +67,9 @@ function drawSample() {
   const e = sample.entry, s = W / sample.w, wallMin = wallMinOf(draft.program);
   if (!e) { $("ad-sample-note").textContent = "not divided yet · press Process to run the planner on this sample"; return; }
   if (!draft.ruleset) return;
-  const res = evaluateRuleSet(e, null, draft.ruleset, draft.ruleset.sensitivity, wallMin);
+  // measure the pin colours on the sample photo itself, so colour rules can be judged here too
+  const colours = cellColours({ canvas: sample.canvas, variant: ["Sample", 0], w: sample.w, h: sample.h }, e);
+  const res = evaluateRuleSet(e, colours, draft.ruleset, draft.ruleset.sensitivity, wallMin);
   g.font = `600 ${Math.round(W / 34)}px "JetBrains Mono", monospace`;
   res.cells.forEach((c, i) => {
     const [x0, y0, x1, y1] = c.box;
@@ -72,7 +78,7 @@ function drawSample() {
     g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(x0 * s + 4, y0 * s + 4, W / 13, W / 30);
     g.fillStyle = col; g.fillText(c.dist ? `#${i + 1}:${c.count}` : `#${i + 1}`, x0 * s + 8, y0 * s + W / 34 + 2);
   });
-  for (const w of e.walls) {
+  for (const w of measuresWalls() ? e.walls : []) {
     const missing = w.strength < wallMin;
     g.strokeStyle = missing ? "#ff9f1c" : "rgba(79,179,255,.55)"; g.lineWidth = missing ? 6 : 2;
     g.beginPath();
@@ -82,7 +88,7 @@ function drawSample() {
   }
   $("ad-sample-note").textContent = !e.cells.some((c) => c.dist)
     ? `${e.cells.length} regions and ${e.walls.length} walls found · counting rules need Gemma, so they are checked in Live`
-    : `${res.failed ? "FAIL" : "PASS"} under the draft rules · ground truth: ${e.label ? "logical anomaly" : "good"}`;
+    : `${res.failed ? "FAIL" : "PASS"} under the draft rules · dataset label: ${e.label ? "logical anomaly" : "good"} (under the original pushpin rules)`;
 }
 
 /** Accuracy on the recorded, labelled images, or why it can't be measured. */
@@ -113,8 +119,8 @@ function updateAccuracy() {
 }
 
 function isDirty() {
-  const a = JSON.stringify({ r: draft.ruleset, p: draft.program, s: $input("ad-spec").value.trim() });
-  const b = JSON.stringify({ r: approved.ruleset, p: approved.program, s: approved.specText.trim() });
+  const a = JSON.stringify({ r: draft.ruleset, p: draft.program, s: $input("ad-spec").value.trim(), i: $input("ad-info").value.trim() });
+  const b = JSON.stringify({ r: approved.ruleset, p: approved.program, s: approved.specText.trim(), i: approved.infoText.trim() });
   return a !== b;
 }
 
@@ -234,7 +240,7 @@ function renderCoverage(plan) {
     : c.how === "rule" ? `rule ${c.rules.join(", ")}`
     : c.how === "operator_setting" ? `operator setting: ${c.params.join(", ")}${c.rules?.length ? ` (${c.rules.join(", ")})` : ""}`
     : c.how === "layout" ? "region program" : `not expressible${c.reason ? `: ${c.reason}` : ""}`;
-  box.innerHTML = `<table><tr><th>Sentence</th><th>Checked by</th></tr>${plan.sentences.map((t) => {
+  box.innerHTML = `<table><tr><th>Measurement</th><th>Checked by</th></tr>${plan.sentences.map((t) => {
     const c = byId[t.id], gap = !c || c.how === "not_expressible";
     return `<tr class="${gap ? "gap" : ""}"><td><b class="mono">${esc(t.id)}</b> ${esc(t.text)}</td><td class="how">${esc(how(c))}</td></tr>`;
   }).join("")}</table>` + (plan.warnings?.length ? `<p class="warn">Check before approving: ${esc(plan.warnings.join("; "))}</p>` : "");
@@ -254,7 +260,8 @@ async function processInputs() {
     const progBox = $input("ad-prog"), rulesBox = $input("ad-json");
     const before = { prog: progBox.value, rules: rulesBox.value };          // restored if planning fails
     restoreOnFail = before;
-    const { id } = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), model, image: canvas.toDataURL("image/jpeg", 0.9) });
+    const { id } = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), info_text: $input("ad-info").value.trim(),
+                                                 model, image: canvas.toDataURL("image/jpeg", 0.9) });
     /** @param {{ thoughts: string, output: string, attempts: number } | null | undefined} st @param {string} what */
     const streamText = (st, what) => !st ? `Waiting for the ${what}…`
       : `Thinking${st.attempts > 1 ? ` (attempt ${st.attempts})` : ""}:\n${st.thoughts || "…"}${st.output ? `\n\nOutput so far:\n${st.output}` : ""}`;
@@ -304,7 +311,7 @@ async function processInputs() {
 
 function discardDraft() {
   plannedBy = null; $("ad-plan-notes").hidden = true; $("ad-coverage").hidden = true;
-  $input("ad-spec").value = approved.specText;
+  $input("ad-spec").value = approved.specText; $input("ad-info").value = approved.infoText;
   $input("ad-prog").value = JSON.stringify(approved.program, null, 2); readProgram();
   $input("ad-json").value = ruleSetToJson(approved.ruleset); readJson();
   stale = false;
@@ -315,7 +322,7 @@ async function doApprove() {
   if (!confirm(`Approve this specification and send it to the production line?${report ? `\n\nAccuracy ${(report.accuracy * 100).toFixed(1)}% on ${report.n} labelled images.` : "\n\nAccuracy was not measured."}`)) return;
   /** @param {string} token */
   const send = (token) => approve({ program: draft.program, layout: draft.layout, ruleset: /** @type {RuleSetV2} */ (draft.ruleset),
-                                    accuracy: report, specText: $input("ad-spec").value.trim() }, token);
+                                    accuracy: report, specText: $input("ad-spec").value.trim(), infoText: $input("ad-info").value.trim() }, token);
   try {
     let token = sessionStorage.getItem("spec2inspect.admin") || "";
     try { await send(token); }
@@ -342,7 +349,7 @@ export function initAdmin(trayPhotos) {
              ...trayPhotos.map((t) => ({ name: `${t.name} · sample photo, no labels`, url: t.url }))];
   $("ad-sample").innerHTML = samples.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join("");
   $("ad-sample").addEventListener("change", () => { stale = true; loadSample(parseInt($select("ad-sample").value, 10), false); });
-  $("ad-spec").addEventListener("input", () => { stale = true; renderStale(); updateStatus(); });
+  for (const id of ["ad-spec", "ad-info"]) $(id).addEventListener("input", () => { stale = true; renderStale(); updateStatus(); });
   $("ad-process").addEventListener("click", processInputs);
   $("ad-json").addEventListener("input", readJson);
   /** Toggle a JSON box between read-only and editable. @param {string} btnId @param {string} boxId */

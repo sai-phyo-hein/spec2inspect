@@ -203,7 +203,8 @@ export function probability(tree, dists, fixed) {
 /**
  * Evaluate a box-level test on the most likely answers. Returns the boolean (or null) and the values it used.
  * @param {Node} tree
- * @param {{ cells: { r: number, c: number, id?: string, dists: Record<string, Record<string, number> | null>, colour: string | null }[], wallsMissing: number, params: Record<string, Val> }} box
+ * @param {{ cells: { r: number, c: number, id?: string, dists: Record<string, Record<string, number> | null>, colour?: string | null }[], wallsMissing: number, params: Record<string, Val> }} box
+ *   (colour: a name, null for "measured, no pin", undefined for "not measured")
  * @returns {{ ok: Val, used: Record<string, Val> }}
  */
 export function evalBox(tree, box) {
@@ -218,7 +219,10 @@ export function evalBox(tree, box) {
     const sel = parseSelector(n.args[1] && n.args[1].t === "str" ? n.args[1].v : "all");
     const cells = box.cells.filter((c) => selects(sel, c));
     const label = `${n.fn}(${m}${n.args[1] && n.args[1].t === "str" ? `, "${n.args[1].v}"` : ""})`;
-    if (n.fn === "distinct") return (used[label] = new Set(cells.map((c) => c.colour).filter(Boolean)).size);
+    if (n.fn === "distinct") {                                       // colours not measured (undefined): unknown, not zero
+      if (cells.some((c) => c.colour === undefined)) return (used[label] = null);
+      return (used[label] = new Set(cells.map((c) => c.colour).filter(Boolean)).size);
+    }
     let sum = 0;
     for (const c of cells) {
       const d = c.dists[m]; if (!d) return (used[label] = null);

@@ -34,13 +34,14 @@ export const wallMinOf = (p) => {
 };
 
 export const DEFAULT_SPEC_TEXT = "Each compartment holds exactly one pushpin.\nThe box holds 15 pushpins in total.\nEvery compartment is enclosed by walls.";
+export const DEFAULT_INFO_TEXT = "The container has 15 equally spaced compartments in 3 rows and 5 columns, separated by walls.";
 
 export const approved = {
   version: 0, approved_at: "",
   /** @type {RegionProgram} */ program: structuredClone(DEFAULT_PROGRAM),
   /** @type {Layout} */ layout: { rows: ROWS, cols: COLS },
   /** @type {RuleSetV2} */ ruleset: DEFAULT_RULESET(),
-  specText: DEFAULT_SPEC_TEXT,
+  specText: DEFAULT_SPEC_TEXT, infoText: DEFAULT_INFO_TEXT,
   /** @type {AccuracyReport | null} */ accuracy: null,
   /** @type {Record<string, number | string>} operator settings at this station */ operator: {},
 };
@@ -66,7 +67,8 @@ function apply(spec) {
   Object.assign(approved, { version: spec.version, approved_at: spec.approved_at,
                             program: spec.program || structuredClone(DEFAULT_PROGRAM),
                             layout: spec.layout || { rows: ROWS, cols: COLS },
-                            ruleset, accuracy: spec.accuracy, specText: spec.spec_text || DEFAULT_SPEC_TEXT });
+                            ruleset, accuracy: spec.accuracy, specText: spec.spec_text || DEFAULT_SPEC_TEXT,
+                            infoText: spec.info_text || DEFAULT_INFO_TEXT });
   loadOperator();
   listeners.forEach((f) => f());
 }
@@ -82,12 +84,13 @@ export async function loadApproved() {
 
 /**
  * Approve a draft: the server validates it, stores it as the next version, and the line switches to it.
- * @param {{ program: RegionProgram, layout: Layout | null, ruleset: RuleSetV2, accuracy: AccuracyReport | null, specText: string }} draft
+ * @param {{ program: RegionProgram, layout: Layout | null, ruleset: RuleSetV2, accuracy: AccuracyReport | null, specText: string, infoText: string }} draft
  * @param {string} token admin token ("" if the deployment doesn't require one)
  * @returns {Promise<SpecVersion>}
  */
 export async function approve(draft, token) {
-  const body = { program: draft.program, layout: draft.layout, ruleset: draft.ruleset, accuracy: draft.accuracy, spec_text: draft.specText };
+  const body = { program: draft.program, layout: draft.layout, ruleset: draft.ruleset, accuracy: draft.accuracy,
+                 spec_text: draft.specText, info_text: draft.infoText };
   const r = await fetch("api/spec", { method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Token": token },
                                       body: JSON.stringify(body) });
   if (r.status === 403) throw Object.assign(new Error("admin token required"), { code: 403 });
