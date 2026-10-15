@@ -404,3 +404,9 @@ button.link { background: none; border: 0; padding: 0; color: var(--info); font-
 .ad-model-note { margin: -4px 0 0; font-size: .75rem; }
 .plan-notes { margin: 0; padding: 8px 10px; border-left: 3px solid #7c5cff; background: var(--panel-2); border-radius: 0 6px 6px 0; font-size: .82rem; }
 .plan-notes[hidden] { display: none; }
+.rule.ro .op { border-color: var(--accent); }
+.rule.ro input.op { width: 56px; }
+.op-tag { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.op-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.op-setting { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; }
+.op-setting input.op { width: 56px; }

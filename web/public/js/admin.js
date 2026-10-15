@@ -6,12 +6,12 @@
 // accuracy on labelled images (not possible for mock images). Only approved versions run on the production line.
 import { $, $input, $select, $button } from "./dom.js";
 import { state } from "./state.js";
-import { RULE_DEFS, evaluate, rulesToJson, parseRulesJson, describeRule, createRuleSet } from "./rules.js";
+import { parseRuleSet, ruleSetToJson, ruleText, checkerOf, evaluateRuleSet } from "./ruleset.js";
 import { approved, approve, onApprovedChanged, DEFAULT_PROGRAM, wallMinOf } from "./spec.js";
 import { measureAccuracy } from "./accuracy.js";
 import { boxImage } from "./data.js";
 /** @typedef {import("../../types/model").Entry} Entry */
-/** @typedef {import("../../types/model").Rule} Rule */
+/** @typedef {import("../../types/model").RuleSetV2} RuleSetV2 */
 /** @typedef {import("../../types/model").RegionProgram} RegionProgram */
 /** @typedef {import("../../types/model").Layout} Layout */
 /** @typedef {import("../../types/model").AccuracyReport} AccuracyReport */
@@ -19,9 +19,9 @@ import { boxImage } from "./data.js";
 /**
  * The draft: the region program and the rules (with sensitivity), both from their JSON boxes, plus the layout the
  * program resolved to on the current sample.
- * @type {{ program: RegionProgram, rules: Rule[], threshold: number, rulesValid: boolean, progValid: boolean, layout: Layout | null }}
+ * @type {{ program: RegionProgram, ruleset: RuleSetV2 | null, rulesValid: boolean, progValid: boolean, layout: Layout | null }}
  */
-const draft = { program: structuredClone(DEFAULT_PROGRAM), rules: [], threshold: 0.5, rulesValid: true, progValid: true, layout: null };
+const draft = { program: structuredClone(DEFAULT_PROGRAM), ruleset: null, rulesValid: true, progValid: true, layout: null };
 const valid = () => draft.rulesValid && draft.progValid;
 /** @type {AccuracyReport | null} */ let report = null;
 /** @type {{ entry: Entry | null, canvas: HTMLCanvasElement, w: number, h: number, labelled: boolean } | null} */ let sample = null;
@@ -41,8 +41,14 @@ function renderPlan() {
 }
 
 function renderRules() {
-  $("ad-rule-list").innerHTML = draft.rules.map((r) =>
-    `<li class="${r.on ? "" : "off"}">${esc(describeRule(r))}<span class="tag">${RULE_DEFS[r.type].k || "Gemma"}</span></li>`).join("");
+  const rs = draft.ruleset;
+  if (!rs) { $("ad-rule-list").innerHTML = ""; return; }
+  const ops = Object.entries(rs.params).filter(([, p]) => p.operator).map(([k, p]) => `${p.label || k} (default ${p.default})`);
+  $("ad-rule-list").innerHTML = rs.rules.map((r) =>
+    `<li class="${r.on === false ? "off" : ""}"><b class="mono">${esc(r.id)}</b> ${esc(ruleText(r))}<span class="tag">${esc(checkerOf(r))}</span>` +
+    `<div class="mono muted expr">${r.for !== undefined ? `for ${esc(r.for)}: ` : ""}${esc(r.test)}</div></li>`).join("") +
+    (rs.questions.length ? `<li class="meta">Questions to Gemma in every region: ${rs.questions.map((q) => `<b>q.${esc(q.id)}</b> "${esc(q.text)}" (${q.answer})`).join("; ")}</li>` : "") +
+    (ops.length ? `<li class="meta"><span class="tag op-tag">operator can change</span> ${esc(ops.join(", "))}</li>` : "");
 }
 
 /** Draw the sample photo with numbered regions, walls and, when Gemma's answers are known, the draft verdict. */
@@ -53,7 +59,8 @@ function drawSample() {
   g.drawImage(sample.canvas, 0, 0, W, H);
   const e = sample.entry, s = W / sample.w, wallMin = wallMinOf(draft.program);
   if (!e) { $("ad-sample-note").textContent = "not divided yet · press Process to run the planner on this sample"; return; }
-  const res = evaluate(e, null, draft.rules, draft.threshold, wallMin);
+  if (!draft.ruleset) return;
+  const res = evaluateRuleSet(e, null, draft.ruleset, draft.ruleset.sensitivity, wallMin);
   g.font = `600 ${Math.round(W / 34)}px "JetBrains Mono", monospace`;
   res.cells.forEach((c, i) => {
     const [x0, y0, x1, y1] = c.box;
@@ -86,7 +93,8 @@ function updateAccuracy() {
   if (!isRecordedKind() || (draft.layout && (draft.layout.rows !== 3 || draft.layout.cols !== 5))) {
     out.innerHTML = `<p class="muted">The recordings were divided by a 3 × 5 grid-from-walls program; accuracy on them can only be measured for that kind of program.</p>`; return;
   }
-  report = measureAccuracy(state.entries, draft.rules, draft.threshold, wallMinOf(draft.program));
+  if (!draft.ruleset) return;
+  report = measureAccuracy(state.entries, draft.ruleset, draft.ruleset.sensitivity, wallMinOf(draft.program));
   const pct = (/** @type {number} */ x) => (x * 100).toFixed(1) + "%";
   out.innerHTML = `
     <div class="acc-kpis">
@@ -102,8 +110,8 @@ function updateAccuracy() {
 }
 
 function isDirty() {
-  const a = JSON.stringify({ r: draft.rules.map((r) => [r.type, r.on, r.p]), t: draft.threshold, p: draft.program, s: $input("ad-spec").value.trim() });
-  const b = JSON.stringify({ r: approved.rules.items.map((r) => [r.type, r.on, r.p]), t: approved.threshold, p: approved.program, s: approved.specText.trim() });
+  const a = JSON.stringify({ r: draft.ruleset, p: draft.program, s: $input("ad-spec").value.trim() });
+  const b = JSON.stringify({ r: approved.ruleset, p: approved.program, s: approved.specText.trim() });
   return a !== b;
 }
 
@@ -127,8 +135,7 @@ function refresh() { renderStale(); renderPlan(); renderRules(); drawSample(); u
 /** Read the JSON box into the draft (shows the first validation error instead, if any). */
 function readJson() {
   try {
-    const { rules, threshold } = parseRulesJson($input("ad-json").value);
-    draft.rules = rules.items; draft.threshold = threshold; draft.rulesValid = true;
+    draft.ruleset = parseRuleSet($input("ad-json").value); draft.rulesValid = true;
     $("ad-json-error").textContent = "";
   } catch (e) {
     draft.rulesValid = false; $("ad-json-error").textContent = e instanceof Error ? e.message : String(e);
@@ -223,9 +230,7 @@ async function processInputs() {
     const plan = await adminPost("api/plan", { spec_text: $input("ad-spec").value.trim(), model: $select("ad-model").value,
                                                image: canvas.toDataURL("image/jpeg", 0.9) });
     $input("ad-prog").value = JSON.stringify(plan.program, null, 2); readProgram();
-    const set = createRuleSet([]);
-    for (const r of plan.rules) { set.add(r.type, r.p); set.items[set.items.length - 1].on = r.on !== false; }
-    $input("ad-json").value = rulesToJson(set.items, plan.sensitivity); readJson();
+    $input("ad-json").value = ruleSetToJson(plan.ruleset); readJson();
     plannedBy = { model: plan.model, seconds: plan.seconds };
     notes.textContent = plan.notes ? `Planner notes: ${plan.notes}` : "The planner added no notes.";
     btn.textContent = "Dividing the sample…";
@@ -240,7 +245,7 @@ function discardDraft() {
   plannedBy = null; $("ad-plan-notes").hidden = true;
   $input("ad-spec").value = approved.specText;
   $input("ad-prog").value = JSON.stringify(approved.program, null, 2); readProgram();
-  $input("ad-json").value = rulesToJson(approved.rules.items, approved.threshold); readJson();
+  $input("ad-json").value = ruleSetToJson(approved.ruleset); readJson();
   stale = false;
   loadSample(parseInt($select("ad-sample").value || "0", 10), true);
 }
@@ -248,7 +253,7 @@ function discardDraft() {
 async function doApprove() {
   if (!confirm(`Approve this specification and send it to the production line?${report ? `\n\nAccuracy ${(report.accuracy * 100).toFixed(1)}% on ${report.n} labelled images.` : "\n\nAccuracy was not measured."}`)) return;
   /** @param {string} token */
-  const send = (token) => approve({ program: draft.program, layout: draft.layout, rules: draft.rules, threshold: draft.threshold,
+  const send = (token) => approve({ program: draft.program, layout: draft.layout, ruleset: /** @type {RuleSetV2} */ (draft.ruleset),
                                     accuracy: report, specText: $input("ad-spec").value.trim() }, token);
   try {
     let token = sessionStorage.getItem("spec2inspect.admin") || "";
@@ -260,7 +265,7 @@ async function doApprove() {
     }
     // show exactly what the server stored (it fills in defaults), so the draft matches the approved version
     $input("ad-prog").value = JSON.stringify(approved.program, null, 2); readProgram();
-    $input("ad-json").value = rulesToJson(approved.rules.items, approved.threshold); readJson();
+    $input("ad-json").value = ruleSetToJson(approved.ruleset); readJson();
     stale = false; refresh();
   } catch (e) { alert(`Could not approve: ${e instanceof Error ? e.message : e}`); }
 }

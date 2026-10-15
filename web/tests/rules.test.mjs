@@ -1,7 +1,12 @@
-// Unit tests for the rule engine (public/js/rules.js). Run: npm test
+// Unit tests for the rule engine: the original typed rules, converted to expression rules (rules/v2) and evaluated by
+// the rule-set engine, must behave exactly as before. Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate, createRuleSet } from "../public/js/rules.js";
+import { createRuleSet } from "../public/js/rules.js";
+import { typedToRuleSet, evaluateRuleSet } from "../public/js/ruleset.js";
+
+/** The old call shape, on the new engine. @param {any} entry @param {any} colors @param {any[]} items @param {number} thr */
+const evaluate = (entry, colors, items, thr) => evaluateRuleSet(entry, colors, typedToRuleSet(items, thr), thr, 0.3);
 
 // @ts-check
 /** @typedef {import("../types/model").Entry} Entry */
@@ -34,7 +39,7 @@ test("an empty compartment breaks 'exactly 1' and the box total", () => {
   const res = evaluate(box({ counts }), null, defaults(), 0.5);
   assert.equal(res.failed, true);
   assert.ok(res.findings.some((f) => f.startsWith("R1: compartment row 2, col 3")));
-  assert.ok(res.findings.some((f) => f.startsWith("R2: the box holds <b>14</b>")));
+  assert.ok(res.findings.some((f) => f.startsWith("R2:") && f.includes("total(count) = <b>14</b>")));
   assert.equal(res.cells[7].flagged, true);
 });
 
@@ -49,7 +54,7 @@ test("a rule switched off is ignored", () => {
   const rules = defaults(); rules[2].on = false;
   const res = evaluate(box({ wallStrength: 0.06 }), null, rules, 0.5);
   assert.equal(res.failed, false);
-  assert.equal(res.status[rules[2].id], "off");
+  assert.equal(res.status.R3, "off");
 });
 
 test("changing the spec to 2 pins per compartment rejects a 1-pin box", () => {
@@ -70,8 +75,8 @@ test("colour rules use the measured pin colours", () => {
   const colors = Array(15).fill("yellow"); colors[4] = "blue";
   const yellowOnly = createRuleSet(["color_all"]).items;
   const sameColour = createRuleSet(["color_same"]).items;
-  assert.match(evaluate(box(), colors, yellowOnly, 0.5).findings[0], /row 1, col 5 has a <b>blue<\/b> pin, expected yellow/);
-  assert.match(evaluate(box(), colors, sameColour, 0.5).findings[0], /mixed colours in one box \(yellow, blue\)/);
+  assert.match(evaluate(box(), colors, yellowOnly, 0.5).findings[0], /row 1, col 5 has a <b>blue<\/b> pin/);
+  assert.match(evaluate(box(), colors, sameColour, 0.5).findings[0], /distinct\(colour\) = <b>2<\/b>/);
   assert.equal(evaluate(box(), Array(15).fill("yellow"), yellowOnly, 0.5).failed, false);
 });
 
@@ -79,32 +84,9 @@ test("row, column and range totals", () => {
   const counts = Array(15).fill(1); counts[0] = 2;
   const set = createRuleSet(["row_total", "col_total", "box_range"]);
   const res = evaluate(box({ counts }), null, set.items, 0.5);
-  assert.ok(res.findings.some((f) => f.startsWith("R1: row 1 holds <b>6</b>")));
-  assert.ok(res.findings.some((f) => f.startsWith("R2: column 1 holds <b>4</b>")));
-  assert.equal(res.status[set.items[2].id], "pass");           // 16 is within 14-16
+  assert.ok(res.findings.some((f) => f.startsWith("R1:") && f.includes('total(count, "row 1") = <b>6</b>')));
+  assert.ok(res.findings.some((f) => f.startsWith("R2:") && f.includes('total(count, "col 1") = <b>4</b>')));
+  assert.equal(res.status.R3, "pass");                         // 16 is within 14-16
 });
 
-// ---- rules JSON (what the Inspection Planner will generate; executed by the line) ----
-import { rulesToJson, parseRulesJson } from "../public/js/rules.js";
 
-test("rules JSON round-trips: serialise, parse, same rules and sensitivity", () => {
-  const set = createRuleSet(["each_exact", "box_exact", "walls"]); set.items[2].on = false;
-  const json = rulesToJson(set.items, 0.45);
-  const doc = JSON.parse(json);
-  assert.equal(doc.rules[0].checker, "gemma4.count");
-  assert.equal(doc.rules[2].on, false);
-  const back = parseRulesJson(json);
-  assert.equal(back.threshold, 0.45);
-  assert.deepEqual(back.rules.items.map((r) => [r.type, r.on, r.p]), set.items.map((r) => [r.type, r.on, r.p]));
-});
-
-test("rules JSON validation gives readable errors", () => {
-  const bad = (/** @type {object} */ doc) => { try { parseRulesJson(JSON.stringify(doc)); return ""; } catch (e) { return String(e instanceof Error ? e.message : e); } };
-  assert.match(bad({ rules: [{ type: "nope" }] }), /unknown type "nope"/);
-  assert.match(bad({ rules: [{ type: "each_exact", params: { x: 1 } }] }), /has no parameter "x"/);
-  assert.match(bad({ rules: [{ type: "each_exact", params: { n: 1.5 } }] }), /whole number/);
-  assert.match(bad({ rules: [{ type: "walls", checker: "gemma4.count" }] }), /answered by "geometry.wall-line"/);
-  assert.match(bad({ rules: [{ type: "color_all", params: { col: "teal" } }] }), /colour must be one of/);
-  assert.match(bad({ sensitivity: 2, rules: [{ type: "walls" }] }), /sensitivity/);
-  assert.match(parseRulesJson.toString().length ? (() => { try { parseRulesJson("{"); return ""; } catch (e) { return String(e); } })() : "", /not valid JSON/);
-});

@@ -4,7 +4,13 @@
 export type Dist = Record<string, number>;
 
 /** One compartment: grid position, pixel box [x0, y0, x1, y1] in original image pixels, and Gemma's answer. */
-export interface Cell { r: number; c: number; box: [number, number, number, number]; dist: Dist | null; }
+export interface Cell {
+  r: number; c: number; box: [number, number, number, number]; dist: Dist | null;
+  /** named region (fixed_regions programs) */
+  id?: string;
+  /** answers to the rule set's custom questions, per question id */
+  q?: Record<string, Dist | null>;
+}
 
 /** One internal wall segment: vertical ("v") or horizontal ("h"), its position, and the measured wall-line strength. */
 export interface Wall { o: "v" | "h"; r: number; c: number; strength: number; }
@@ -35,7 +41,11 @@ export interface RuleParams { n?: number; r?: number; c?: number; a?: number; b?
 
 export interface RuleDef { p: RuleParams; t: string; k?: string; }
 
-export interface Rule { id: number; type: RuleType; on: boolean; p: RuleParams; }
+export interface Rule {
+  id: number; type: RuleType; on: boolean; p: RuleParams;
+  /** parameters the operator may change on the production line (e.g. ["col"] or ["n"]) */
+  operator?: (keyof RuleParams)[];
+}
 
 export interface RuleSet {
   items: Rule[]; seq: number;
@@ -50,7 +60,22 @@ export interface EvalCell extends Cell { count: string; viol: number | null; fla
 
 export interface Evaluation {
   cells: EvalCell[]; missing: Wall[]; failed: boolean; findings: string[];
-  hasModel: boolean; status: Record<number, RuleStatus>;
+  hasModel: boolean; status: Record<string, RuleStatus>;
+}
+
+/** A named value rules can refer to as param.<name>; operator: true lets the operator change it on the line. */
+export interface RuleParamDef { default: number | string; kind: "count" | "colour"; operator?: boolean; label?: string; }
+
+/** A custom question the planner asks Gemma in every region (read in rules as q.<id>). */
+export interface Question { id: string; text: string; answer: "yesno" | "count"; }
+
+/** An expression rule: with "for", checked in every selected region; without, checked once per box. */
+export interface ExprRule { id: string; test: string; for?: string; text?: string; on?: boolean; }
+
+/** What each region and box must satisfy (format rules/v2). */
+export interface RuleSetV2 {
+  version: "rules/v2"; sensitivity: number;
+  params: Record<string, RuleParamDef>; questions: Question[]; rules: ExprRule[];
 }
 
 /** A box photo ready for drawing and pixel measurement. */
@@ -119,6 +144,8 @@ export interface AccuracyReport {
 /** A specification approved on the Admin page; the production line runs the latest one. */
 export interface SpecVersion {
   version: number; approved_at: string; program: RegionProgram; layout?: Layout | null;
-  rules: { type: RuleType; on: boolean; p: RuleParams }[];
-  threshold: number; accuracy: AccuracyReport | null; spec_text?: string;
+  ruleset?: RuleSetV2;
+  /** specifications approved before rules/v2 */
+  rules?: { type: RuleType; on: boolean; p: RuleParams; operator?: (keyof RuleParams)[] }[]; threshold?: number;
+  accuracy: AccuracyReport | null; spec_text?: string;
 }

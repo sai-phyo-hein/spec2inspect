@@ -2,9 +2,9 @@
 // Results of uploaded photos inspected live, for the Check page. Shared through the inspection log on the server
 // (Firestore on Cloud Run); this browser also keeps its own last 40 in localStorage, used when the log is unreachable.
 import { renderOverlay } from "./panel.js";
-import { describeRule } from "./rules.js";
+import { ruleText, paramValues } from "./ruleset.js";
 /** @typedef {import("../../types/model").Box} Box */
-/** @typedef {import("../../types/model").Rule} Rule */
+/** @typedef {import("../../types/model").RuleSetV2} RuleSetV2 */
 /** @typedef {import("../../types/model").CheckRecord} CheckRecord */
 
 const KEY = "spec2inspect.checks.v1", MAX = 40;
@@ -21,13 +21,14 @@ function save() {
   catch (_) { records = records.slice(0, Math.floor(records.length / 2)); try { localStorage.setItem(KEY, JSON.stringify(records)); } catch (__) { /* storage full or blocked */ } }
 }
 
-/** The rule set as plain sentences, as it stood when the photo was inspected. @param {Rule[]} rules */
-function describeRules(rules) {
-  return rules.filter((r) => r.on).map((r, i) => `R${i + 1}: ${describeRule(r)}`);
+/** The rule set in words, with the parameter values in force when the photo was inspected. @param {RuleSetV2} rs @param {Record<string, number | string>} ops */
+function describeRules(rs, ops) {
+  const vals = paramValues(rs, ops), p = Object.entries(vals).map(([k, v]) => `${k} = ${v}`).join(", ");
+  return [...rs.rules.filter((r) => r.on !== false).map((r) => `${r.id}: ${ruleText(r)}`), ...(p ? [`parameters: ${p}`] : [])];
 }
 
-/** Record a finished live inspection. @param {Box} b @param {Rule[]} rules @param {number} [specVersion] */
-export function recordCheck(b, rules, specVersion) {
+/** Record a finished live inspection. @param {Box} b @param {RuleSetV2} rs @param {number} [specVersion] @param {Record<string, number | string>} [ops] */
+export function recordCheck(b, rs, specVersion, ops = {}) {
   if (!b.result || !b.image) return;
   const W = 480, H = Math.round(W * b.image.h / b.image.w);
   const c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -38,7 +39,7 @@ export function recordCheck(b, rules, specVersion) {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, at: new Date().toISOString(), name: b.name || "uploaded photo",
     thumb: c.toDataURL("image/jpeg", 0.8),
     failed: b.result.failed, findings: b.result.findings.map((f) => f.replace(/<[^>]+>/g, "")),
-    counts: b.result.cells.map((x) => x.count), seconds: b.liveSeconds ?? null, rules: describeRules(rules),
+    counts: b.result.cells.map((x) => x.count), seconds: b.liveSeconds ?? null, rules: describeRules(rs, ops),
     spec_version: specVersion || null,
   };
   records.unshift(rec); records = records.slice(0, MAX); save();

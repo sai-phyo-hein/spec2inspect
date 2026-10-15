@@ -243,16 +243,30 @@ def run_region_program(im, program):
     return dict(rows=rows, cols=cols, xs=xs, ys=ys, grid_strength=float(strength), cells=cells, walls=walls,
                 missing_below=missing_below)
 
-def analyze(im, ask, cell_text=CELL_TEXT, rows=ROWS, cols=COLS, max_workers=4, program=None):
-    """Divide the photo with a region program, then ask the model about every region.
+YESNO = ["yes", "no"]
+
+def question_prompt(q):
+    """A custom question from the rule set, phrased so the first token is the answer."""
+    tail = "Answer with yes or no only." if q["answer"] == "yesno" else "Answer with a single digit (0-9) only."
+    return f"The image is a close-up of a single region of a container. {q['text']} {tail}"
+
+def analyze(im, ask, cell_text=CELL_TEXT, rows=ROWS, cols=COLS, max_workers=4, program=None, questions=()):
+    """Divide the photo with a region program, then ask the model about every region: the pin count, plus each
+    custom question of the rule set (answers go to cell["q"][question id]).
     `ask(crop, text, answers) -> dist or None`. Without a program, a fixed rows x cols grid is used."""
     from concurrent.futures import ThreadPoolExecutor
     im = im.convert("RGB")
     res = run_region_program(im, program or program_for(rows, cols))
+    jobs = [(k, None, cell_text, DIGITS) for k in range(len(res["cells"]))]
+    for q in questions:
+        jobs += [(k, q["id"], question_prompt(q), YESNO if q["answer"] == "yesno" else DIGITS) for k in range(len(res["cells"]))]
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        dists = list(ex.map(lambda c: ask(im.crop(tuple(c["box"])), cell_text, DIGITS), res["cells"]))
-    for c, d in zip(res["cells"], dists):
-        c["dist"] = d
+        answers = list(ex.map(lambda j: ask(im.crop(tuple(res["cells"][j[0]]["box"])), j[2], j[3]), jobs))
+    for (k, qid, _, _), d in zip(jobs, answers):
+        if qid is None:
+            res["cells"][k]["dist"] = d
+        else:
+            res["cells"][k].setdefault("q", {})[qid] = d
     return res
 
 def _font(size=34):

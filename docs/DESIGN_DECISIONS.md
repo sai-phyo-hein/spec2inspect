@@ -139,7 +139,7 @@ runs on the production line, live inspections and the Check page, and every appr
 accuracy report, so each result can be traced to the exact specification that produced it. When the samples are
 mock images, accuracy can't be measured (no ground truth), and the page says so instead of showing a number.
 
-### Why is region division a program, and not generated code?
+### Why are region division and rules programs, and not generated code?
 The line doesn't hard-code how a container is divided: it executes a **region program**, a JSON list of operations
 from a fixed set (`normalize_light`, `grid_from_walls`, `fixed_regions`, `wall_segments`), interpreted by
 `spec_core.run_region_program`. The planner outputs this program, so a new container layout needs a new program, not
@@ -147,6 +147,14 @@ new code. We deliberately chose a declarative program over letting a model write
 runs (unknown operations and out-of-range values are refused), it can't do anything outside region division, it runs
 the same on Kaggle, Cloud Run and in the Admin preview, and it is unit-tested on synthetic trays. Extending what the
 planner can express means adding an operation, reviewed once, rather than trusting generated code on a factory line.
+
+Rules follow the same idea one level up: an **expression language** over region measurements (`count`, `colour`,
+answers to custom questions, `walls.missing`), with per-region rules (`for`), box rules, `total()` / `distinct()`,
+comparisons, logic and named parameters. The planner can compose any rule this grammar can say, which is far more than a
+fixed list of rule types, but every expression is parsed and validated before it runs, can only read measurements, and
+is evaluated against Gemma's answer *distributions*, so the sensitivity setting and the accuracy report keep working.
+The original rule types convert to expressions exactly: on the 240 recordings, the expression engine gives the same
+verdict and the same flagged compartments as the old engine for every box.
 
 ### Why does the browser apply the rules?
 Gemma's answers are stored as probabilities per compartment, so the rules (counts, totals, colours, walls) can be

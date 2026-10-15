@@ -5,7 +5,8 @@ The line page and its live-inspection API, served by one Cloud Run service.
 ```
 web/
 ├── app_web.py          FastAPI: /api/live/*, /api/samples, /api/checks, /api/spec, /api/regions, /replay, /
-├── spec_core.py        Shared Python logic: region programs (interpreter), grid detection, wall measurement, model calls
+├── spec_core.py        Shared Python logic: region programs (interpreter), grid detection, walls, model questions
+├── spec_rules.py       server-side validation of rule sets and expressions (mirrors expr.js)
 ├── public/             The line page — static files, also what Firebase Hosting serves
 │   ├── index.html      Markup only
 │   ├── css/line.css    Styles
@@ -13,7 +14,9 @@ web/
 │       ├── main.js         entry point: wires the modules together
 │       ├── config.js       constants (grid size, wall threshold, scene geometry, cost guard)
 │       ├── state.js        shared line state, timing helpers
-│       ├── rules.js        rule types, rules JSON (serialise + validate) and evaluation (pure, unit-tested)
+│       ├── expr.js         rule expression language: parser, validation, probabilistic evaluation (pure, tested)
+│       ├── ruleset.js      rule sets (rules/v2): validate, evaluate a box, convert old typed rules (pure, tested)
+│       ├── rules.js        the original typed rule library (kept to convert older approved specs)
 │       ├── colours.js      pin colour per compartment from pixels
 │       ├── data.js         recorded results and box images
 │       ├── scene.js        conveyor drawing, clamping arms, diverter, box movement

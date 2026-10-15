@@ -31,7 +31,7 @@ async function readPhoto(url) {
 async function analyseOnGpu(image, onProgress) {
   const r = await fetch("api/live/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify({ image: image.canvas.toDataURL("image/jpeg", 0.92),
-                                                                 program: approved.program }) });
+                                                                 program: approved.program, questions: approved.ruleset.questions }) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
   const { id } = await r.json();
   const t0 = Date.now();

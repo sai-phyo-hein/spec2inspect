@@ -26,6 +26,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from spec_core import CELL_TEXT, DEFAULT_PROGRAM, analyze, answer_distribution, chat_body, run_region_program
+from spec_rules import validate_ruleset
 
 REPLAY_DIR     = os.environ.get("REPLAY_DIR", "/app/replay")
 PUBLIC_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
@@ -135,6 +136,7 @@ class RegionProgram(BaseModel):
 class UploadJob(BaseModel):
     image: str                                # data URL or bare base64 of a JPEG/PNG photo
     program: Optional[RegionProgram] = None   # the approved region program (default if omitted)
+    questions: list[dict] = Field(default_factory=list, max_length=4)   # the approved rule set's custom questions
 
 def decode_image(data: str) -> Image.Image:
     raw = data.split(",", 1)[1] if data.startswith("data:") else data
@@ -147,7 +149,7 @@ def decode_image(data: str) -> Image.Image:
         raise HTTPException(400, "not a readable image")
     return im.convert("RGB")
 
-def run_job(job_id: str, im: Image.Image, program: Optional[dict] = None):
+def run_job(job_id: str, im: Image.Image, program: Optional[dict] = None, questions: tuple = ()):
     job = JOBS[job_id]
     with GPU_SLOT:
         job.update(state="running", started=time.time())
@@ -155,7 +157,7 @@ def run_job(job_id: str, im: Image.Image, program: Optional[dict] = None):
             t0 = time.time()
             deadline = t0 + GPU_DEADLINE_S
             raw = analyze(im, lambda c, t, a: ask_remote(c, t, a, deadline), cell_text=CELL_TEXT,
-                          program=program or DEFAULT_PROGRAM, max_workers=GPU_PARALLEL)
+                          program=program or DEFAULT_PROGRAM, questions=questions, max_workers=GPU_PARALLEL)
             raw.update(entry=f"upload-{job_id}", img_id="uploaded photo", label=None, color="Uploaded", stops=0.0,
                        w=im.width, h=im.height, seconds=round(time.time() - t0, 2), live=True,
                        queued_s=round(t0 - job["created"], 2))
@@ -207,7 +209,11 @@ def create_job(body: UploadJob):
     with JOBS_LOCK:
         JOBS[job_id] = {"state": "queued", "created": time.time()}
     program = body.program.as_dict() if body.program else None
-    threading.Thread(target=run_job, args=(job_id, im, program), daemon=True).start()
+    try:   # validate the questions the same way as in an approved rule set
+        questions = tuple(validate_ruleset({"questions": body.questions, "rules": [{"test": "walls.missing == 0"}]})["questions"])
+    except ValueError as ex:
+        raise HTTPException(422, f"questions: {ex}")
+    threading.Thread(target=run_job, args=(job_id, im, program, questions), daemon=True).start()
     return {"id": job_id}
 
 @app.get("/api/live/jobs/{job_id}")
@@ -309,14 +315,6 @@ def list_checks(limit: int = 100):
 
 
 # ---------------- approved specification (Admin rule builder) ----------------
-RULE_TYPES = ("each_exact", "each_max", "each_min", "cell_exact", "row_total", "col_total",
-              "box_exact", "box_range", "walls", "color_all", "color_same")
-
-class RuleIn(BaseModel):
-    type: Literal[RULE_TYPES]                 # type: ignore[valid-type]
-    on: bool = True
-    p: dict[str, Union[int, str]] = Field(default_factory=dict, max_length=6)
-
 class Layout(BaseModel):
     rows: int = Field(ge=1, le=12)            # the layout the program resolved to on the sample (for display)
     cols: int = Field(ge=1, le=12)
@@ -324,8 +322,7 @@ class Layout(BaseModel):
 class SpecIn(BaseModel):
     program: RegionProgram                    # how photos are divided into regions (executed by the line)
     layout: Optional[Layout] = None
-    rules: list[RuleIn] = Field(max_length=30)
-    threshold: float = Field(0.5, ge=0.05, le=0.95)
+    ruleset: dict                             # rules/v2: expression rules, parameters, questions (validated below)
     accuracy: Optional[dict] = None           # the report shown when it was approved (None for mock images)
     spec_text: str = Field("", max_length=4000)   # the engineer's written specification the rules came from
 
@@ -359,7 +356,11 @@ def approve_spec(body: SpecIn, x_admin_token: str = Header(default="")):
         raise HTTPException(403, "admin token required to approve a specification")
     with SPEC_LOCK:
         prev = SPECS.latest()
-        spec = {**body.model_dump(exclude={"program"}), "program": body.program.as_dict(),
+        try:
+            ruleset = validate_ruleset(body.ruleset)
+        except ValueError as ex:
+            raise HTTPException(422, f"rule set: {ex}")
+        spec = {**body.model_dump(exclude={"program", "ruleset"}), "program": body.program.as_dict(), "ruleset": ruleset,
                 "version": (prev["version"] + 1) if prev else 1,
                 "approved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         SPECS.add(spec)
@@ -367,11 +368,6 @@ def approve_spec(body: SpecIn, x_admin_token: str = Header(default="")):
 
 # ---------------- Inspection Planner (Gemini on Vertex AI) ----------------
 COLOURS = ["yellow", "orange", "red", "pink", "purple", "blue", "cyan", "green"]
-RULE_PARAMS = {  # the parameters each rule type takes, with defaults (mirrors RULE_DEFS in public/js/rules.js)
-    "each_exact": {"n": 1}, "each_max": {"n": 1}, "each_min": {"n": 1}, "cell_exact": {"r": 1, "c": 1, "n": 1},
-    "row_total": {"r": 1, "n": 5}, "col_total": {"c": 1, "n": 3}, "box_exact": {"n": 15}, "box_range": {"a": 14, "b": 16},
-    "walls": {}, "color_all": {"col": "yellow"}, "color_same": {},
-}
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -391,58 +387,60 @@ PLAN_SCHEMA = {
                     "required": ["box"]}},
             },
             "required": ["op"]}}}, "required": ["steps"]},
+        "params": {"type": "array", "description": "named values the rules use as param.<name>", "items": {
+            "type": "object", "properties": {
+                "name": {"type": "string"}, "kind": {"type": "string", "enum": ["count", "colour"]},
+                "default": {"type": "string", "description": "a whole number for count, a colour name for colour"},
+                "operator": {"type": "boolean", "description": "true if the operator may change it on the line"},
+                "label": {"type": "string"}},
+            "required": ["name", "kind", "default", "operator"]}},
+        "questions": {"type": "array", "description": "extra questions to ask the vision model in every region (max 4)", "items": {
+            "type": "object", "properties": {
+                "id": {"type": "string"}, "text": {"type": "string"}, "answer": {"type": "string", "enum": ["yesno", "count"]}},
+            "required": ["id", "text", "answer"]}},
         "rules": {"type": "array", "items": {"type": "object", "properties": {
-            "type": {"type": "string", "enum": list(RULE_PARAMS)},
-            "n": {"type": "integer"}, "r": {"type": "integer"}, "c": {"type": "integer"},
-            "a": {"type": "integer"}, "b": {"type": "integer"}, "col": {"type": "string", "enum": COLOURS}},
-            "required": ["type"]}},
+            "id": {"type": "string"}, "text": {"type": "string", "description": "the sentence of the specification this rule checks"},
+            "for": {"type": "string", "description": "per-region rules only: all, row N, col N, cell R C or region NAME"},
+            "test": {"type": "string", "description": "the expression"}},
+            "required": ["id", "text", "test"]}},
         "sensitivity": {"type": "number", "description": "flag a region when P(violation) exceeds this; 0.5 unless the spec says otherwise"},
         "notes": {"type": "string", "description": "one or two sentences: how the spec was mapped, and any sentence that could not be expressed"},
     },
-    "required": ["region_program", "rules", "sensitivity", "notes"],
+    "required": ["region_program", "params", "questions", "rules", "sensitivity", "notes"],
 }
 
 PLANNER_INSTRUCTIONS = """You are the Inspection Planner for an automated visual inspection station.
 An engineer gives you a written specification for a product and one sample photo of its container (it may be empty,
-hold mock items, or hold real products). Plan the inspection as two programs that the station will execute:
+hold mock items, or hold real products). Plan the inspection as two programs that the station will execute.
 
-1. region_program: how each photo is divided into regions, as an ordered list of steps from this fixed set:
+1. region_program: how each photo is divided into regions, an ordered list of steps from this fixed set:
    - normalize_light: auto-gain for the geometric steps. Use it first.
-   - grid_from_walls (rows, cols): compartments found from the container's own wall lines. Use rows "auto" and cols
-     "auto" unless the specification states the layout. Use this whenever the container is a grid of compartments.
+   - grid_from_walls (rows, cols): compartments from the container's own wall lines. Use "auto" unless the
+     specification states the layout. Use this whenever the container is a grid of compartments.
    - fixed_regions (regions): explicit rectangles as fractions of the photo [x0, y0, x1, y1], only for containers that
-     are not a grid. Give each region an id.
-   - wall_segments (missing_below): measure every internal wall between grid compartments; include it whenever the
-     specification says something about walls or separators. Default missing_below 0.3.
-2. rules: what the regions must satisfy, using only these types (parameters in brackets; rows and columns count from 1):
-   each_exact [n], each_max [n], each_min [n]: pins/items per compartment, exactly / at most / at least n
-   cell_exact [r, c, n]: one compartment holds exactly n
-   row_total [r, n], col_total [c, n]: total in a row / column
-   box_exact [n], box_range [a, b]: total in the whole container
-   walls: every compartment is enclosed by walls (needs wall_segments)
-   color_all [col]: every item has colour col; color_same: all items share one colour
-Express every checkable sentence of the specification as rules, and nothing that the specification does not say.
-If a sentence cannot be expressed with these types, leave it out and say so in notes. Return only the JSON."""
+     are not a grid. Give each region an id; rules can then select it with "region <id>".
+   - wall_segments (missing_below): measure every internal wall; include it whenever the specification says something
+     about walls or separators. Default missing_below 0.3.
 
-_plan_times: list = []
-_genai = {"client": None}
-
-def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
-    """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards)."""
-    from google import genai
-    from google.genai import types
-    if _genai["client"] is None:
-        _genai["client"] = genai.Client(vertexai=True, project=PROJECT_ID or None, location=PLANNER_LOC,
-                                        http_options=types.HttpOptions(timeout=120_000))
-    resp = _genai["client"].models.generate_content(
-        model=model,
-        contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), f"Written specification:\n{spec_text}"],
-        config=types.GenerateContentConfig(system_instruction=PLANNER_INSTRUCTIONS, temperature=0,
-                                           response_mime_type="application/json", response_json_schema=PLAN_SCHEMA))
-    return json.loads(resp.text)
+2. rules: one rule per checkable sentence of the specification, written as an expression.
+   - A rule with "for" is checked in every selected region: "all", "row N", "col N", "cell R C" (counting from 1), or
+     "region <id>". Measurements in a region: count (number of pushpins/items, 0-9), colour (the dominant colour of the
+     items: yellow, orange, red, pink, purple, blue, cyan, green), q.<id> (the answer to one of your questions).
+   - A rule without "for" is checked once per box. Box values: total(count) or total(count, "row 2") (sum of counts),
+     total(q.<id>) (sum of a count question, or the number of "yes" answers), distinct(colour) (number of colours),
+     walls.missing (number of missing walls).
+   - Operators: == != < <= > >= + - and or not, parentheses. Strings in double quotes: colour == "yellow".
+   - params: named values used as param.<name>. If the specification lets the operator choose or change a value on the
+     line, make it a param with operator true (e.g. "the operator chooses the colour to check" -> a colour param with
+     operator true and a rule for all: colour == param.colour; "the operator can change the number per compartment" ->
+     a count param with operator true used in count == param.n). Give each param a short label.
+   - questions: only when a sentence needs something other than counting pushpins or colour (e.g. "Is the lid closed?",
+     "How many tangerines are in this region?"). Ask a short, visual question with answer yesno or count. At most 4.
+   Express every checkable sentence, and nothing the specification does not say. If a sentence cannot be expressed,
+   leave it out and say so in notes. Return only the JSON."""
 
 def normalize_plan(raw: dict) -> dict:
-    """Turn the planner's JSON into a validated region program and rule list; refuse anything out of bounds."""
+    """Turn the planner's JSON into a validated region program and rule set; refuse anything out of bounds."""
     steps = []
     for st in (raw.get("region_program") or {}).get("steps") or []:
         op = st.get("op")
@@ -460,22 +458,32 @@ def normalize_plan(raw: dict) -> dict:
         elif op == "normalize_light":
             steps.append({"op": op})
     program = RegionProgram(steps=steps).as_dict()          # raises on anything invalid
-    rules = []
-    for r in raw.get("rules") or []:
-        t = r.get("type")
-        if t not in RULE_PARAMS:
-            continue
-        p = {k: r.get(k, d) for k, d in RULE_PARAMS[t].items()}
-        for k, v in p.items():
-            if k == "col":
-                if v not in COLOURS: raise ValueError(f"rule {t}: unknown colour {v!r}")
-            elif not isinstance(v, int) or not 0 <= v <= 99 or (k in ("r", "c") and not 1 <= v <= 8):
-                raise ValueError(f"rule {t}: {k}={v!r} is out of range")
-        rules.append({"type": t, "on": True, "p": p})
-    if not rules:
-        raise ValueError("the planner produced no usable rules")
-    sens = float(raw.get("sensitivity", 0.5))
-    return {"program": program, "rules": rules, "sensitivity": min(0.95, max(0.05, sens)), "notes": str(raw.get("notes", ""))[:600]}
+    params = {}
+    for p in raw.get("params") or []:
+        kind = p.get("kind", "count"); default = str(p.get("default", "")).strip().lower()
+        params[str(p.get("name"))] = {"kind": kind, "default": int(default) if kind == "count" and default.isdigit() else default,
+                                      "operator": bool(p.get("operator")), **({"label": p["label"]} if p.get("label") else {})}
+    rules = [{k: r[k] for k in ("id", "text", "for", "test") if r.get(k) not in (None, "")} for r in raw.get("rules") or []]
+    ruleset = validate_ruleset({"sensitivity": min(0.95, max(0.05, float(raw.get("sensitivity", 0.5)))),
+                                "params": params, "questions": raw.get("questions") or [], "rules": rules})
+    return {"program": program, "ruleset": ruleset, "notes": str(raw.get("notes", ""))[:600]}
+
+_plan_times: list = []
+_genai = {"client": None}
+
+def call_gemini(model: str, jpeg: bytes, spec_text: str) -> dict:
+    """One structured-output call to Gemini on Vertex AI. Returns the parsed JSON (validated afterwards)."""
+    from google import genai
+    from google.genai import types
+    if _genai["client"] is None:
+        _genai["client"] = genai.Client(vertexai=True, project=PROJECT_ID or None, location=PLANNER_LOC,
+                                        http_options=types.HttpOptions(timeout=120_000))
+    resp = _genai["client"].models.generate_content(
+        model=model,
+        contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), f"Written specification:\n{spec_text}"],
+        config=types.GenerateContentConfig(system_instruction=PLANNER_INSTRUCTIONS, temperature=0,
+                                           response_mime_type="application/json", response_json_schema=PLAN_SCHEMA))
+    return json.loads(resp.text)
 
 class PlanIn(BaseModel):
     spec_text: str = Field(min_length=3, max_length=4000)
@@ -507,6 +515,8 @@ def plan(body: PlanIn, x_admin_token: str = Header(default="")):
         raise HTTPException(502, f"{body.model} could not be reached: {type(ex).__name__}: {str(ex)[:300]}")
     try:
         out = normalize_plan(raw)
+    except HTTPException as ex:
+        raise HTTPException(422, f"{body.model} returned a plan that failed validation: {ex.detail}")
     except Exception as ex:
         raise HTTPException(422, f"{body.model} returned a plan that failed validation: {ex}")
     out.update(model=body.model, seconds=round(time.time() - t0, 1))

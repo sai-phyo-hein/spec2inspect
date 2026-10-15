@@ -2,7 +2,7 @@
 // The inspection station: clamp, capture, analyse (recorded or live), apply the rules, signal the diverter.
 import { $ } from "./dom.js";
 import { state, wait, whileRunning } from "./state.js";
-import { evaluate } from "./rules.js";
+import { evaluateRuleSet } from "./ruleset.js";
 import { cellColours } from "./colours.js";
 import { variantText } from "./data.js";
 import { clearShot, drawShot, drawMatrix, setVerdict, setVerdictMessage, setStep, resetSteps, showImage } from "./panel.js";
@@ -16,7 +16,8 @@ import { approved, onApprovedChanged, wallMinOf } from "./spec.js";
 /** @typedef {import("../../types/model").Entry} Entry */
 
 /** The line always applies the approved specification. @param {Box} b @returns {Evaluation} */
-const applyRules = (b) => evaluate(b.entry, b.colors, approved.rules.items, approved.threshold, wallMinOf(approved.program));
+const applyRules = (b) => evaluateRuleSet(b.entry, b.colors, approved.ruleset, approved.ruleset.sensitivity,
+                                         wallMinOf(approved.program), approved.operator);
 
 const CANCELLED = new Error("box removed from the line");
 
@@ -106,7 +107,7 @@ async function finish(b) {
   log(`box <b>#${b.id + 1}</b>${b.upload ? ` <span class="info">[your photo, live ${b.liveSeconds}s]</span>` : ""} → ` +
       `<span class="${result.failed ? "bad" : "ok"}">${result.failed ? "FAIL" : "PASS"}</span>${first} · signal sent to diverter`);
 
-  if (b.upload) recordCheck(b, approved.rules.items, approved.version);   // shows up on the Check page
+  if (b.upload) recordCheck(b, approved.ruleset, approved.version, approved.operator);   // shows up on the Check page
   clamp(false); await wait(450);
   b.phase = "toDiverter"; state.station = null;
   $("line-status").textContent = "RUNNING"; tower("t-g");

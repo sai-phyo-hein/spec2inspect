@@ -29,7 +29,13 @@ The line page (`/` on `spec-web`, source layout in `web/README.md`):
      divided: an ordered list of operations from a fixed set (`normalize_light`, `grid_from_walls` with rows/cols
      `"auto"` or fixed, `fixed_regions` for non-grid trays, `wall_segments` with the missing-wall threshold), validated
      by `spec-web` and run by `spec_core.run_region_program` on the sample (`POST /api/regions`, geometry only), on live
-     photos and in the line. The **rules** (JSON) say what each region must satisfy, validated against the rule schema.
+     photos and in the line. The **rule set** (JSON, `rules/v2`) says what each region and box must satisfy, as
+     **expression rules**: `{"for": "all", "test": "count == param.n"}` is checked in every region,
+     `{"test": "total(count) == 15 and walls.missing == 0"}` once per box. Measurements: `count` (Gemma), `colour`
+     (pixels), `q.<id>` (custom questions the planner asks Gemma in every region, yes/no or a count), `walls.missing`;
+     box functions `total()` and `distinct()`; named **parameters**, some marked operator-adjustable, which appear as
+     controls on the line. Expressions are parsed and validated (browser `expr.js`, server `spec_rules.py`) and only
+     ever read measurements.
      Both come from the **Gemini Inspection Planner** (`POST /api/plan`), validated by `spec-web`; the planner's notes
      say how each sentence was mapped and what couldn't be expressed. Both remain editable for corrections.
   3. **Verification:** the sample divided into numbered regions with its walls, and an **accuracy report** on the 240

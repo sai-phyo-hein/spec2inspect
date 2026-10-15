@@ -4,6 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { auroc, measureAccuracy } from "../public/js/accuracy.js";
 import { createRuleSet } from "../public/js/rules.js";
+import { typedToRuleSet } from "../public/js/ruleset.js";
+/** @param {import("../types/model").RuleType[]} [types] */
+const rs = (types) => typedToRuleSet(createRuleSet(types).items, 0.5);
 
 const sure = (/** @type {number} */ n) => Object.fromEntries([...Array(10).keys()].map((k) => [String(k), k === n ? 0.98 : 0.02 / 9]));
 /** @param {number[]} counts @param {0|1} label @param {number} [wall] */
@@ -22,7 +25,7 @@ test("auroc: perfect, chance and undefined cases", () => {
 
 test("measureAccuracy counts the confusion matrix against the labels", () => {
   const entries = [entry(ones, 0), entry(ones, 0), entry(empty, 1), entry(ones, 1, 0.05), entry(ones, 1)];  // last anomaly is missed
-  const rep = measureAccuracy(entries, createRuleSet().items, 0.5, 0.3);
+  const rep = measureAccuracy(entries, rs(), 0.5, 0.3);
   assert.deepEqual([rep.tp, rep.fn, rep.fp, rep.tn], [2, 1, 0, 2]);
   assert.equal(rep.n, 5);
   assert.equal(rep.accuracy, 0.8);
@@ -31,6 +34,6 @@ test("measureAccuracy counts the confusion matrix against the labels", () => {
 
 test("a stricter wall threshold changes the result", () => {
   const entries = [entry(ones, 0, 0.4), entry(ones, 1, 0.05)];
-  assert.equal(measureAccuracy(entries, createRuleSet(["walls"]).items, 0.5, 0.3).accuracy, 1);
-  assert.equal(measureAccuracy(entries, createRuleSet(["walls"]).items, 0.5, 0.5).fp, 1);   // the good box's wall now "missing"
+  assert.equal(measureAccuracy(entries, rs(["walls"]), 0.5, 0.3).accuracy, 1);
+  assert.equal(measureAccuracy(entries, rs(["walls"]), 0.5, 0.5).fp, 1);   // the good box's wall now "missing"
 });
