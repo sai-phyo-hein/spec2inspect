@@ -667,6 +667,18 @@ def regions(body: RegionsIn):
     return raw
 
 
+# ---------------- caching: page files are revalidated on every load, recorded images are immutable ----------------
+@app.middleware("http")
+async def cache_headers(request, call_next):
+    resp = await call_next(request)
+    path = request.url.path
+    if path.startswith("/replay/images/"):
+        resp.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+    elif not path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-cache")      # HTML/JS/CSS always match after a deploy
+    return resp
+
+
 # ---------------- static files: recorded results and the line page ----------------
 app.mount("/replay", StaticFiles(directory=REPLAY_DIR, check_dir=False), name="replay")
 app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="line-page")

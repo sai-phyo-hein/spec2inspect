@@ -26,19 +26,25 @@ $("btn-run").addEventListener("click", () => {
 });
 $select("speed").addEventListener("change", (e) => { state.speed = parseFloat(/** @type {HTMLSelectElement} */ (e.target).value); });
 
+/** Run one part of the page's set-up; a failure there is reported but doesn't stop the production line. @param {string} name @param {() => any} fn */
+async function part(name, fn) {
+  try { await fn(); }
+  catch (e) { const msg = e instanceof Error ? e.message : String(e); console.error(name, e); log(`<span class="bad">${name} could not start: ${msg}</span>`); }
+}
+
 try {
   const idx = await loadReplay();
   await loadApproved();                              // the line runs the latest approved specification
-  await initUpload();
-  initCheck();
-  initAdmin(trayItems().filter((t) => t.kind === "sample"));
-  initViewSwitch();
-  await initModeSwitch((idx.recorded || "").slice(0, 10));
-  startLine((b) => {                                 // a box reached the camera
+  startLine((b) => {                                 // the line first: a box reached the camera
     if (!b.upload) { inspect(b); return; }
     const analyse = b.analyse;
     if (analyse) inspectUpload(b, analyse).finally(() => b.onDone?.());
   });
+  await part("Live photos", () => initUpload());
+  await part("Check page", () => initCheck());
+  await part("Mode switch", () => initModeSwitch((idx.recorded || "").slice(0, 10)));
+  await part("View menu", () => initViewSwitch());
+  await part("Admin page", () => initAdmin(trayItems().filter((t) => t.kind === "sample")));
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e);
   setMode("replay", `<b>No recorded results found.</b> ${msg}`);
