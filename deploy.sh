@@ -10,7 +10,7 @@ AR="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 WEB_SA="spec-web@${PROJECT}.iam.gserviceaccount.com"
 DEPLOY_GPU="${DEPLOY_GPU:-1}"          # set DEPLOY_GPU=0 for a replay-only page (no live uploads, no GPU cost)
 # ADMIN_TOKEN=... ./deploy.sh  makes approving a specification (and running the planner) require that token
-PLANNER_MODELS="${PLANNER_MODELS:-gemini-3.5-pro}"   # Gemini model(s) offered on the Admin page; check with ./check_planner_model.sh
+PLANNER_MODELS="${PLANNER_MODELS:-gemini-3.8-flash}"   # Gemini model(s) offered on the Admin page; check with ./check_planner_model.sh
 REBUILD_GPU="${REBUILD_GPU:-0}"        # the GPU image (model inside) is built once; REBUILD_GPU=1 to rebuild it
 REPLAY_BUCKET="${PROJECT}-replay"      # filled by ./prepare_replay.sh, mounted read-only into spec-web
 STAGING="gs://${PROJECT}-build-staging"
