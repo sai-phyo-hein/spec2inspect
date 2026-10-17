@@ -68,11 +68,14 @@ if [ "$DEPLOY_GPU" = "1" ]; then
 fi
 
 gcloud builds submit web --tag "$AR/spec-web:latest" --timeout 1800s "${BUILD_FLAGS[@]}"   # code only: a few hundred KB
+# --no-cpu-throttling: planning (Gemini) and live inspections run in background threads after the request that
+# started them has returned; with CPU allocated only during requests, those threads stall between the page's polls.
 gcloud run deploy spec-web --image "$AR/spec-web:latest" --region "$REGION" \
   --service-account "$WEB_SA" --cpu 1 --memory 2Gi --execution-environment gen2 \
   --add-volume "name=replay,type=cloud-storage,bucket=${REPLAY_BUCKET},readonly=true" \
   --add-volume-mount "volume=replay,mount-path=/app/replay" \
   --min-instances 0 --max-instances 1 --timeout 3600 --session-affinity \
+  --no-cpu-throttling \
   --set-env-vars "^@^${ENV_VARS//,/@}@CHECKS_STORE=firestore@GOOGLE_CLOUD_PROJECT=${PROJECT}@PLANNER_LOCATION=global@PLANNER_MODELS=${PLANNER_MODELS}${ADMIN_TOKEN:+@ADMIN_TOKEN=${ADMIN_TOKEN}}" \
   --port 8080 --allow-unauthenticated
 

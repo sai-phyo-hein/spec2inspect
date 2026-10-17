@@ -144,5 +144,13 @@ class GeminiStreamTest(unittest.TestCase):
         self.assertTrue(app_web.transient(RuntimeError("504 DEADLINE_EXCEEDED. Deadline expired")))
         self.assertFalse(app_web.transient(RuntimeError("403 PERMISSION_DENIED")))
 
+class StuckJobTest(unittest.TestCase):
+    def test_a_job_past_the_deadline_is_reported_instead_of_polling_forever(self):
+        import time
+        app_web.PLAN_JOBS["stuck"] = {"state": "running", "created": time.time() - app_web.PLAN_DEADLINE_S - 1, "stage": "regions"}
+        out = app_web.plan_status("stuck")
+        self.assertEqual(out["state"], "error")
+        self.assertIn("stuck at the regions step", out["error"])
+
 if __name__ == "__main__":
     unittest.main()

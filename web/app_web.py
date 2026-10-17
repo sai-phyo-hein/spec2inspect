@@ -49,7 +49,8 @@ PLANNER_MODELS = [m.strip() for m in os.environ.get("PLANNER_MODELS", "gemini-3.
 PLANNER_LOC    = os.environ.get("PLANNER_LOCATION", "global")     # Gemini 3.x on Vertex AI: the global endpoint
 PLANS_PER_MIN  = int(os.environ.get("PLANS_PER_MINUTE", "6"))     # cost guard for the public page
 PLANNER_THINK  = os.environ.get("PLANNER_THINKING", "LOW")        # Gemini thinking level: MINIMAL, LOW, MEDIUM, HIGH
-PLANNER_TIMEOUT_S = int(os.environ.get("PLANNER_TIMEOUT_S", "240"))
+PLANNER_TIMEOUT_S = int(os.environ.get("PLANNER_TIMEOUT_S", "120"))   # longest silence allowed in Gemini's stream
+PLAN_DEADLINE_S = int(os.environ.get("PLAN_DEADLINE_S", "480"))        # a planning job still running after this is reported as failed
 MAX_SAMPLES    = 40                                           # tray photos listed from the dataset
 
 app = FastAPI(title="spec2inspect", docs_url=None, redoc_url=None)
@@ -569,8 +570,10 @@ def call_gemini(model, jpeg, text, instructions, schema, on_thought=None, on_tex
                                            response_mime_type="application/json", response_json_schema=schema, **think)
     contents = [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), text]
     def run(thinking: bool) -> str:
-        answer = []
+        answer, t0, first = [], time.time(), None
         for chunk in _genai["client"].models.generate_content_stream(model=model, contents=contents, config=config(thinking)):
+            if first is None:
+                first = time.time() - t0
             for cand in chunk.candidates or []:
                 for part in (cand.content.parts if cand.content else None) or []:
                     if not part.text: continue
@@ -579,6 +582,7 @@ def call_gemini(model, jpeg, text, instructions, schema, on_thought=None, on_tex
                     else:
                         answer.append(part.text)
                         if on_text: on_text(part.text)
+        print(f"gemini {model}: first chunk {first if first is None else round(first, 1)}s, done in {time.time() - t0:.1f}s", flush=True)
         return "".join(answer)
     try:
         out = run(True)
@@ -655,6 +659,7 @@ def plan_sync(body: PlanIn, job: Optional[dict] = None) -> dict:
         raise HTTPException(422, f"the planned region program doesn't run on this sample: {ex}")
     job["region_result"] = {"program": regions["program"], "notes": regions["notes"]}
 
+    print(f"plan: regions done in {time.time() - t0:.1f}s", flush=True)
     job["stage"] = "rules"
     prompt = spec + f"\n\nRegions (already planned): {json.dumps(regions['program'])}\nOn the sample photo this gives {seen}."
     rules, warnings = stage("rules", RULES_INSTRUCTIONS, RULES_SCHEMA, prompt, normalize_rules,
@@ -709,6 +714,10 @@ def plan_status(job_id: str):
     job = PLAN_JOBS.get(job_id)
     if not job:
         raise HTTPException(404, "unknown or expired planning job")
+    if job["state"] == "running" and time.time() - job["created"] > PLAN_DEADLINE_S:
+        job.update(state="error", status=504,
+                   error=f"the planner made no result within {PLAN_DEADLINE_S} s (stuck at the {job.get('stage')} step); try again")
+        print(f"plan {job_id}: gave up at stage {job.get('stage')} after {PLAN_DEADLINE_S}s", flush=True)
     out = {"state": job["state"], "stage": job.get("stage"), "elapsed": round(time.time() - job["created"], 1),
            "regions": job.get("regions"), "rules": job.get("rules"), "region_result": job.get("region_result")}
     if job["state"] == "done": out["result"] = job["result"]

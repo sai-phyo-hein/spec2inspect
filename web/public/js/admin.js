@@ -118,9 +118,13 @@ function updateAccuracy() {
     <p class="muted">${report.images} (MVTec LOCO pushpins, 6 colour/lighting variants), recorded Gemma 4 answers${report.note ? `; ${report.note}` : ""}.</p>`;
 }
 
+/** JSON with object keys sorted, so equal specifications compare equal whatever order their fields were written in. @param {any} v @returns {string} */
+const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+
 function isDirty() {
-  const a = JSON.stringify({ r: draft.ruleset, p: draft.program, s: $input("ad-spec").value.trim(), i: $input("ad-info").value.trim() });
-  const b = JSON.stringify({ r: approved.ruleset, p: approved.program, s: approved.specText.trim(), i: approved.infoText.trim() });
+  const a = canon({ r: draft.ruleset, p: draft.program, s: $input("ad-spec").value.trim(), i: $input("ad-info").value.trim() });
+  const b = canon({ r: approved.ruleset, p: approved.program, s: approved.specText.trim(), i: approved.infoText.trim() });
   return a !== b;
 }
 
