@@ -3,6 +3,7 @@
 import { $, $select } from "./dom.js";
 import { state } from "./state.js";
 import { loadReplay } from "./data.js";
+import { bootStep, bootDone, bootFail, preload } from "./boot.js";
 import { drawMatrix } from "./panel.js";
 import { initModeSwitch } from "./mode.js";
 import { initUpload } from "./upload.js";
@@ -33,20 +34,26 @@ async function part(name, fn) {
 }
 
 try {
+  bootStep("Waking the station server…");
   const idx = await loadReplay();
+  bootStep("Loading the approved specification…");
   await loadApproved();                              // the line runs the latest approved specification
+  bootStep("Loading the first box…");
+  if (state.playlist[0] && state.imgUrl) await preload(state.imgUrl(state.playlist[0]), 8000);
   startLine((b) => {                                 // the line first: a box reached the camera
     if (!b.upload) { inspect(b); return; }
     const analyse = b.analyse;
     if (analyse) inspectUpload(b, analyse).finally(() => b.onDone?.());
   });
-  await part("Live photos", () => initUpload());
-  await part("Check page", () => initCheck());
   await part("Mode switch", () => initModeSwitch((idx.recorded || "").slice(0, 10)));
   await part("View menu", () => initViewSwitch());
+  await part("Check page", () => initCheck());
+  bootDone();                                        // the line is running and the controls work
+  await part("Live photos", () => initUpload());
   await part("Admin page", () => initAdmin(trayItems().filter((t) => t.kind === "sample")));
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e);
+  bootFail(msg);
   setMode("replay", `<b>No recorded results found.</b> ${msg}`);
   log(`<span class="bad">${msg}</span>`);
 }

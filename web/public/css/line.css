@@ -423,3 +423,21 @@ button.link { background: none; border: 0; padding: 0; color: var(--info); font-
 .rule-sentences li { margin-bottom: 4px; }
 .rule-meta p { margin: 2px 0; font-size: .82rem; }
 .json.streaming { color: #b9a8ff; font-style: italic; white-space: pre-wrap; }
+
+/* start-up overlay: blurs the page until the station has loaded */
+.boot { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px;
+  background: rgba(14, 18, 21, .45); background: color-mix(in srgb, var(--bg) 55%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: opacity .35s ease, visibility .35s; }
+.boot.done { opacity: 0; visibility: hidden; pointer-events: none; }
+.boot-card { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow); padding: 24px 30px; text-align: center; max-width: 380px; }
+.boot-spinner { width: 36px; height: 36px; margin: 0 auto 14px; border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--accent); animation: boot-spin .9s linear infinite; }
+.boot-title { font-size: 1.35rem; font-weight: 700; text-transform: uppercase; }
+.boot-step { margin-top: 6px; color: var(--muted); }
+.boot-hint { margin-top: 10px; font-size: .85rem; color: var(--muted); }
+.boot-retry { margin-top: 14px; padding: 8px 18px; border-radius: 8px; border: 0; background: var(--accent);
+  color: #1a1400; font: inherit; font-weight: 600; cursor: pointer; }
+.boot.failed .boot-spinner { animation: none; border-top-color: var(--bad); }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .boot-spinner { animation-duration: 2.4s; } .boot { transition: none; } }
